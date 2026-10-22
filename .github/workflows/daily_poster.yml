@@ -53,6 +53,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Load .env secret if provided
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -n "$ENV_FILE_CONTENT" ]; then
+            printf "%s\n" "$ENV_FILE_CONTENT" > .env
+          fi
+
       - name: Run Social Media Automation
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -68,6 +76,12 @@ jobs:
           MAKE_IG_WEBHOOK_URL: ${{ secrets.MAKE_IG_WEBHOOK_URL }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
+          # Remove empty env vars so python-dotenv can load values from .env if ENV_FILE was used
+          for var in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN YOUTUBE_REFRESH_TOKEN GDRIVE_QUEUE_FOLDER_ID GDRIVE_ARCHIVE_FOLDER_ID IG_USER_ID IG_ACCESS_TOKEN MAKE_IG_WEBHOOK_URL; do
+            if [ -z "${!var}" ]; then
+              unset "$var"
+            fi
+          done
           PLATFORM="${{ github.event.inputs.platform || 'all' }}"
           DRY_RUN_FLAG=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
