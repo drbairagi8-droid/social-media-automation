@@ -1,16 +1,21 @@
 import logging
 import os
-from typing import List
+from typing import List, Optional
 import requests
 
 from src.outlier_radar.config import OutlierVideo
+from src.outlier_radar.script_writer import RefinedScript
 
 logger = logging.getLogger(__name__)
 
 
-def send_telegram_radar_report(videos: List[OutlierVideo], drive_doc_url: str = "") -> bool:
+def send_telegram_radar_report(
+    videos: List[OutlierVideo],
+    scripts: Optional[List[RefinedScript]] = None,
+    drive_doc_url: str = "",
+) -> bool:
     """
-    Sends the formatted Daily Outlier Radar report directly to the creator's Telegram chat.
+    Sends the formatted Daily Outlier Radar and 5 Script previews directly to Telegram.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "6866435263").strip()
@@ -19,55 +24,49 @@ def send_telegram_radar_report(videos: List[OutlierVideo], drive_doc_url: str = 
         logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set; skipping Telegram dispatch.")
         return False
 
-    if not videos:
-        msg = "🧠 *Daily Psychology Outlier Radar*\n\nNo significant outliers (>3x) detected in the last 72 hours. Everything within normal baselines."
-        _send_raw(token, chat_id, msg)
-        return True
-
+    scripts = scripts or []
     header = (
-        "🧠 *DAILY PSYCHOLOGY OUTLIER RADAR*\n"
-        f"📅 *Breakout Videos Detected:* {len(videos)}\n"
+        "🧠 *DAILY PSYCHOLOGY SCRIPT BRIEFING*\n"
+        f"📅 *5 Production-Ready Hindi Scripts Generated*\n"
+        f"🔍 *Outlier Topics Analyzed:* {len(videos)}\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
 
-    items_text = []
-    for idx, v in enumerate(videos, 1):
-        block = (
-            f"🔥 *#{idx}: {v.title}*\n"
-            f"👤 *Creator:* {v.channel_title} | 🚀 *{v.outlier_multiplier}x Outlier*\n"
-            f"👁 *Views:* {v.view_count:,} (Channel avg: {v.channel_median_views:,})\n"
-            f"🔗 [Watch Video]({v.url})\n\n"
-            f"🎯 *The 3s Hook:* {v.hook_deconstruction}\n"
-            f"🧬 *Mechanism:* {v.psychological_mechanism}\n"
-            f"💡 *Why It Outperformed:* {v.why_it_worked}\n"
-            f"🎨 *Uday Adaptation Idea:* {v.adaptation_angle}\n"
-            "──────────────────────\n\n"
-        )
-        items_text.append(block)
+    scripts_blocks = []
+    if scripts:
+        scripts_blocks.append("🎬 *TODAY'S 5 PRODUCTION SCRIPTS:*\n\n")
+        for idx, s in enumerate(scripts, 1):
+            block = (
+                f"✨ *Script #{idx}: {s.topic_name}*\n"
+                f"🎭 *Format:* {s.format_type}\n"
+                f"🇮🇳 *Indian Relatability:* {s.indian_relatability_angle}\n"
+                f"🚀 *Share Catalyst:* {s.share_catalyst}\n"
+                f"💡 *Mechanism:* {s.summary_and_mechanism[:160]}...\n"
+                "──────────────────────\n"
+            )
+            scripts_blocks.append(block)
+
+    outliers_summary = "\n🔥 *TOP OUTLIER BREAKOUTS STUDIED:*\n"
+    for idx, v in enumerate(videos[:3], 1):
+        outliers_summary += f"• *{v.channel_title}*: {v.title[:45]}... (*{v.outlier_multiplier}x*)\n"
 
     footer = ""
     if drive_doc_url:
-        footer = f"\n📄 *Full Detailed Doc Saved in Drive:*\n{drive_doc_url}"
+        footer = (
+            f"\n📄 *FULL SCRIPTS & STORYBOARD CUES IN DRIVE:*\n"
+            f"[👉 Open Today's Google Doc]({drive_doc_url})"
+        )
 
-    # Telegram has a 4096 character limit per message; send in structured chunks
+    # Format chunks for Telegram 4096 char limit
+    full_text = header + "".join(scripts_blocks) + outliers_summary + footer
     chunks = []
-    current_chunk = header
-    for block in items_text:
-        if len(current_chunk) + len(block) > 3800:
-            chunks.append(current_chunk)
-            current_chunk = block
-        else:
-            current_chunk += block
-
-    if footer:
-        if len(current_chunk) + len(footer) > 3800:
-            chunks.append(current_chunk)
-            chunks.append(footer)
-        else:
-            current_chunk += footer
-
-    if current_chunk:
-        chunks.append(current_chunk)
+    if len(full_text) > 3800:
+        # Split into Script Part and Outlier Part
+        chunk1 = header + "".join(scripts_blocks[:3])
+        chunk2 = "".join(scripts_blocks[3:]) + outliers_summary + footer
+        chunks = [chunk1, chunk2]
+    else:
+        chunks = [full_text]
 
     success = True
     for chunk in chunks:
@@ -89,7 +88,6 @@ def _send_raw(token: str, chat_id: str, text: str) -> bool:
     try:
         resp = requests.post(url, json=payload, timeout=20)
         if not resp.ok:
-            # Fallback to plain text if Markdown fails due to special characters
             payload.pop("parse_mode", None)
             resp = requests.post(url, json=payload, timeout=20)
         return resp.ok
