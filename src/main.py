@@ -7,6 +7,7 @@ from src.ai_metadata import generate_viral_metadata
 from src.config import Config
 from src.gdrive_manager import GDriveManager
 from src.instagram_uploader import upload_to_instagram
+from src.linkedin_uploader import upload_to_linkedin
 from src.youtube_uploader import upload_to_youtube
 
 logging.basicConfig(
@@ -19,11 +20,11 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Automated Daily Social Media Poster for TheKyunProject (YT) & @psychologist.uday (IG)"
+        description="Automated Daily Social Media Poster for TheKyunProject (YT), @psychologist.uday (IG) & Psychologist Uday (LI)"
     )
     parser.add_argument(
         "--platform",
-        choices=["all", "youtube", "instagram"],
+        choices=["all", "youtube", "instagram", "linkedin"],
         default="all",
         help="Target platform(s) to publish to (default: all).",
     )
@@ -75,6 +76,7 @@ def run() -> int:
         errors = []
         yt_done = props.get("youtube_posted") == "true"
         ig_done = props.get("instagram_posted") == "true"
+        li_done = props.get("linkedin_posted") == "true"
 
         # 2. Post to YouTube Shorts (TheKyunProject)
         if args.platform in ("all", "youtube") and not yt_done:
@@ -109,11 +111,34 @@ def run() -> int:
                     logger.exception("Instagram upload failed: %s", exc)
                     errors.append(f"Instagram: {exc}")
 
-        # 4. Archive the video in Google Drive once target platform(s) succeed
+        # 4. Post to LinkedIn Personal Profile (Psychologist Uday)
+        if args.platform in ("all", "linkedin") and not li_done:
+            if not config.is_linkedin_configured:
+                logger.info(
+                    "LinkedIn credentials not configured yet — skipping LinkedIn upload for now."
+                )
+            else:
+                try:
+                    li_post_urn = upload_to_linkedin(local_video_path, metadata, config)
+                    props = gdrive.update_post_status(
+                        file_id=file_id,
+                        existing_props=props,
+                        linkedin_post_urn=li_post_urn,
+                    )
+                    li_done = True
+                except Exception as exc:
+                    logger.exception("LinkedIn upload failed: %s", exc)
+                    errors.append(f"LinkedIn: {exc}")
+
+        # 5. Archive the video in Google Drive once all target platform(s) succeed
         should_archive = (
-            (args.platform == "all" and yt_done and (ig_done or not config.is_instagram_configured))
+            (args.platform == "all"
+             and yt_done
+             and (ig_done or not config.is_instagram_configured)
+             and (li_done or not config.is_linkedin_configured))
             or (args.platform == "youtube" and yt_done)
             or (args.platform == "instagram" and ig_done)
+            or (args.platform == "linkedin" and li_done)
         )
         if should_archive:
             gdrive.archive_completed_video(file_id=file_id, file_name=file_name)

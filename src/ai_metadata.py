@@ -26,12 +26,15 @@ class ViralMetadata(BaseModel):
     instagram_caption: str = Field(
         description="Full viral Instagram Reel caption for @psychologist.uday including 2-sentence hook, mechanism breakdown, actionable shift, Save/Share CTA, and 15 hashtags."
     )
+    linkedin_post: str = Field(
+        description="Full thought-provoking LinkedIn post tailored for Psychologist Uday with opening curiosity hook, 2-3 bullet psychology mechanisms, practical leadership/relational takeaway, conversation CTA, and 4-5 professional hashtags."
+    )
 
 
 def generate_viral_metadata(video_path: Path, original_filename: str, config: Config) -> ViralMetadata:
     """
     Uploads the video to the Gemini Files API, analyzes both audio and visual content
-    with gemini-3.8-flash, and returns structured YouTube + Instagram metadata.
+    with gemini-3.8-flash, and returns structured YouTube + Instagram + LinkedIn metadata.
     """
     client = genai.Client(api_key=config.gemini_api_key)
     uploaded_file = None
@@ -59,6 +62,7 @@ def generate_viral_metadata(video_path: Path, original_filename: str, config: Co
             "Generate the structured viral metadata for:\n"
             "1. YouTube Shorts channel: TheKyunProject\n"
             "2. Instagram Reels account: @psychologist.uday\n"
+            "3. LinkedIn Personal Profile: Psychologist Uday\n"
             "Ensure the YouTube title is under 95 characters and ends with #Shorts."
         )
 
@@ -79,7 +83,7 @@ def generate_viral_metadata(video_path: Path, original_filename: str, config: Co
         last_err = None
         for model_name in candidate_models:
             try:
-                logger.info("Generating viral caption & YouTube metadata with %s...", model_name)
+                logger.info("Generating viral caption & YouTube/LinkedIn metadata with %s...", model_name)
                 interaction = client.interactions.create(
                     model=model_name,
                     system_instruction=BRAND_SYSTEM_INSTRUCTION,
