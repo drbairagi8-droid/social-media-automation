@@ -1,0 +1,15 @@
+# Secrets & Credentials
+.env
+client_secret*.json
+token.json
+
+# Temp video downloads
+tmp/
+*.mp4
+*.mov
+
+# Python cache
+__pycache__/
+*.py[cod]
+.venv/
+venv/
