@@ -36,21 +36,9 @@ class Config:
     make_ig_webhook_url: str = os.getenv("MAKE_IG_WEBHOOK_URL", "").strip()
     share_to_ig_feed: bool = os.getenv("SHARE_TO_IG_FEED", "true").lower() == "true"
 
-    # LinkedIn Personal Profile (Psychologist Uday)
-    linkedin_access_token: str = os.getenv("LINKEDIN_ACCESS_TOKEN", "").strip()
-    linkedin_person_urn: str = os.getenv("LINKEDIN_PERSON_URN", "").strip()
-
     # YouTube Settings (TheKyunProject)
     youtube_category_id: str = os.getenv("YOUTUBE_CATEGORY_ID", "27").strip()  # 27 = Education
     youtube_privacy_status: str = os.getenv("YOUTUBE_PRIVACY_STATUS", "public").strip()
-
-    @property
-    def is_linkedin_configured(self) -> bool:
-        return bool(
-            self.linkedin_access_token
-            and self.linkedin_person_urn
-            and not self.linkedin_access_token.startswith("your_")
-        )
 
     @property
     def is_instagram_configured(self) -> bool:
@@ -81,8 +69,6 @@ class Config:
 
         if not dry_run and platform == "instagram" and not self.is_instagram_configured:
             missing.extend(["IG_USER_ID", "IG_ACCESS_TOKEN"])
-        if not dry_run and platform == "linkedin" and not self.is_linkedin_configured:
-            missing.extend(["LINKEDIN_ACCESS_TOKEN", "LINKEDIN_PERSON_URN"])
 
         if missing:
             raise ValueError(
@@ -118,13 +104,4 @@ BRAND_SYSTEM_INSTRUCTION = """You are the head viral strategist and behavioral p
      - **Body (Mechanism + Shift):** Clear, conversational explanation of the psychological principle shown in the video + 1 simple behavioral shift or self-reflection prompt.
      - **Algorithm CTA:** Prompt a **Save** or **Share** (e.g., "Save this for the next time your mind spirals, and share it with someone who needs to hear this today.") + "Follow @psychologist.uday for daily insights on the mind, relationships & human behavior."
      - **Hashtags:** Exactly 15 targeted, high-intent psychology/mental-health/relationship hashtags separated by a line break.
-
-3. LinkedIn Profile: **Psychologist Uday**
-   - Tone: Thought-provoking, grounded, intellectually curious, tailored for leaders, professionals, and curious thinkers.
-   - Post Structure:
-     - **Hook:** High-retention opening question exploring a subtle workplace or interpersonal quirk (e.g., "Why do high-performing professionals often freeze in low-stakes conflicts?").
-     - **The Mechanism:** 2-3 clean, readable bullet points breaking down the psychology/neuroscience principle.
-     - **The Takeaway:** A practical mindset or behavioral shift for emotional regulation and communication.
-     - **CTA:** "What has been your experience with this? Let's discuss in the comments." + "Follow Psychologist Uday for daily behavioral breakdowns and mental models."
-     - **Hashtags:** 4-5 focused professional hashtags (e.g., #Psychology #EmotionalIntelligence #Leadership #BehavioralScience #MentalHealth).
 """

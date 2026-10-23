@@ -1,4 +1,4 @@
-name: Daily 3x Social Poster (TheKyunProject, @psychologist.uday & Psychologist Uday)
+name: Daily 3x Social Poster (TheKyunProject & @psychologist.uday)
 
 on:
   schedule:
@@ -20,7 +20,6 @@ on:
           - all
           - youtube
           - instagram
-          - linkedin
       dry_run:
         description: 'Dry run (generate AI captions/metadata only without posting)'
         required: true
@@ -75,12 +74,10 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           MAKE_IG_WEBHOOK_URL: ${{ secrets.MAKE_IG_WEBHOOK_URL }}
-          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
-          LINKEDIN_PERSON_URN: ${{ secrets.LINKEDIN_PERSON_URN }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
           # Remove empty env vars so python-dotenv can load values from .env if ENV_FILE was used
-          for var in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN YOUTUBE_REFRESH_TOKEN GDRIVE_QUEUE_FOLDER_ID GDRIVE_ARCHIVE_FOLDER_ID IG_USER_ID IG_ACCESS_TOKEN MAKE_IG_WEBHOOK_URL LINKEDIN_ACCESS_TOKEN LINKEDIN_PERSON_URN; do
+          for var in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN YOUTUBE_REFRESH_TOKEN GDRIVE_QUEUE_FOLDER_ID GDRIVE_ARCHIVE_FOLDER_ID IG_USER_ID IG_ACCESS_TOKEN MAKE_IG_WEBHOOK_URL; do
             if [ -z "${!var}" ]; then
               unset "$var"
             fi

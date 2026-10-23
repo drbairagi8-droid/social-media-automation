@@ -50,6 +50,8 @@ def deconstruct_outliers(videos: List[OutlierVideo], config: Config) -> List[Out
         return []
 
     client = genai.Client(api_key=config.gemini_api_key)
+    if hasattr(client, "interactions") and hasattr(client.interactions, "sdk_configuration"):
+        client.interactions.sdk_configuration.retry_config = None
     logger.info("Running Gemini deep viral deconstruction on %d outlier videos...", len(videos))
 
     summaries = []

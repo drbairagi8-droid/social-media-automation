@@ -108,6 +108,8 @@ def generate_and_refine_scripts(outliers: List[OutlierVideo], config: Config) ->
         return []
 
     client = genai.Client(api_key=config.gemini_api_key)
+    if hasattr(client, "interactions") and hasattr(client.interactions, "sdk_configuration"):
+        client.interactions.sdk_configuration.retry_config = None
 
     # 1. Format researched outliers as context
     research_summary = []

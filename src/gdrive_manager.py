@@ -65,20 +65,16 @@ class GDriveManager:
             props = file_item.get("appProperties") or {}
             yt_done = props.get("youtube_posted") == "true"
             ig_done = props.get("instagram_posted") == "true"
-            li_done = props.get("linkedin_posted") == "true"
 
             if platform == "all":
                 # Check if any configured platform is still pending
                 need_yt = not yt_done
                 need_ig = self.config.is_instagram_configured and not ig_done
-                need_li = self.config.is_linkedin_configured and not li_done
-                if need_yt or need_ig or need_li:
+                if need_yt or need_ig:
                     return file_item
             elif platform == "youtube" and not yt_done:
                 return file_item
             elif platform == "instagram" and not ig_done:
-                return file_item
-            elif platform == "linkedin" and not li_done:
                 return file_item
 
         logger.info("All videos in the Queue folder have already been posted for platform=%s.", platform)
@@ -109,7 +105,6 @@ class GDriveManager:
         existing_props: Optional[Dict[str, str]] = None,
         youtube_video_id: Optional[str] = None,
         instagram_media_id: Optional[str] = None,
-        linkedin_post_urn: Optional[str] = None,
     ) -> Dict[str, str]:
         """Records platform publish state inside the Drive file's `appProperties`."""
         props = dict(existing_props or {})
@@ -119,9 +114,6 @@ class GDriveManager:
         if instagram_media_id:
             props["instagram_posted"] = "true"
             props["instagram_media_id"] = str(instagram_media_id)
-        if linkedin_post_urn:
-            props["linkedin_posted"] = "true"
-            props["linkedin_post_urn"] = str(linkedin_post_urn)
 
         self.service.files().update(
             fileId=file_id,

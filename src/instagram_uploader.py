@@ -1,10 +1,13 @@
 import logging
 import time
 from pathlib import Path
+from typing import Optional
 import requests
+from googleapiclient.discovery import build
 
 from src.ai_metadata import ViralMetadata
 from src.config import Config
+from src.gdrive_manager import get_google_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -15,46 +18,59 @@ RUPLOAD_BASE_URL = f"https://rupload.facebook.com/ig-api-upload/{GRAPH_API_VERSI
 
 def _upload_temp_public_video(video_path: Path) -> str:
     """
-    Uploads the video file to a temporary direct-download HTTPS host (tmpfiles.org / litterbox)
+    Uploads the video file to a direct-download HTTPS host (catbox.moe)
     so Make.com's official Meta Instagram module can fetch the raw .mp4 stream.
     """
-    # Primary: catbox litterbox (1-hour auto-expiring direct .mp4 URL)
-    try:
-        with open(video_path, "rb") as fh:
-            resp = requests.post(
-                "https://litterbox.catbox.moe/resources/internals/api.php",
-                data={"reqtype": "fileupload", "time": "1h"},
-                files={"fileToUpload": (video_path.name, fh, "video/mp4")},
-                timeout=180,
-            )
-        if resp.ok and resp.text.strip().startswith("https://"):
-            return resp.text.strip()
-    except Exception as exc:
-        logger.warning("Primary temp video host failed (%s); trying fallback...", exc)
-
-    # Fallback: tmpfiles.org
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     with open(video_path, "rb") as fh:
         resp = requests.post(
-            "https://tmpfiles.org/api/v1/upload",
-            files={"file": (video_path.name, fh, "video/mp4")},
+            "https://catbox.moe/user/api.php",
+            data={"reqtype": "fileupload"},
+            files={"fileToUpload": (video_path.name, fh, "video/mp4")},
+            headers=headers,
             timeout=180,
         )
-    if not resp.ok:
-        raise RuntimeError(f"Temporary video hosting failed ({resp.status_code}): {resp.text}")
-    page_url = resp.json()["data"]["url"]
-    return page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+    if resp.ok and resp.text.strip().startswith("https://"):
+        return resp.text.strip()
+
+    raise RuntimeError(f"Temporary video hosting on catbox failed ({resp.status_code}): {resp.text}")
 
 
-def upload_to_instagram_via_make(video_path: Path, metadata: ViralMetadata, config: Config) -> str:
+def upload_to_instagram_via_make(
+    video_path: Path,
+    metadata: ViralMetadata,
+    config: Config,
+    gdrive_file_id: Optional[str] = None,
+) -> str:
     """
     Publishes the Reel to @psychologist.uday via Make.com's official Meta-verified
     Instagram for Business integration (bypasses developers.facebook.com registration).
+    Uses direct Google Drive CDN stream if gdrive_file_id is available, or catbox direct link.
     """
-    logger.info("Generating temporary direct HTTPS video stream for Make.com -> Instagram...")
-    public_video_url = _upload_temp_public_video(video_path)
-    logger.info("Temporary video URL ready: %s", public_video_url)
+    public_video_url = None
+
+    if gdrive_file_id:
+        try:
+            creds = get_google_credentials(config)
+            drive = build("drive", "v3", credentials=creds)
+            # Ensure anyone with link can read so Meta can download the mp4
+            drive.permissions().create(
+                fileId=gdrive_file_id,
+                body={"role": "reader", "type": "anyone"},
+            ).execute()
+            public_video_url = f"https://drive.usercontent.google.com/download?id={gdrive_file_id}&export=download"
+            logger.info("Using high-speed direct Google Drive CDN stream URL for Make.com: %s", public_video_url)
+        except Exception as exc:
+            logger.warning("Could not set Drive public stream link (%s); falling back to direct host upload...", exc)
+
+    if not public_video_url:
+        logger.info("Generating temporary direct HTTPS video stream for Make.com -> Instagram...")
+        public_video_url = _upload_temp_public_video(video_path)
+
+    logger.info("Direct video URL ready for Instagram: %s", public_video_url)
 
     payload = {
+        "dedup_id": gdrive_file_id or video_path.stem,
         "video_url": public_video_url,
         "caption": metadata.instagram_caption[:2200],
         "share_to_feed": config.share_to_ig_feed,
@@ -69,7 +85,12 @@ def upload_to_instagram_via_make(video_path: Path, metadata: ViralMetadata, conf
     return resp.text.strip() or "make_webhook_dispatched"
 
 
-def upload_to_instagram(video_path: Path, metadata: ViralMetadata, config: Config) -> str:
+def upload_to_instagram(
+    video_path: Path,
+    metadata: ViralMetadata,
+    config: Config,
+    gdrive_file_id: Optional[str] = None,
+) -> str:
     """
     Uploads a vertical video as an Instagram Reel to @psychologist.uday using either:
     1. Make.com Official Meta Partner Webhook (if MAKE_IG_WEBHOOK_URL is set), or
@@ -77,7 +98,7 @@ def upload_to_instagram(video_path: Path, metadata: ViralMetadata, config: Confi
     Returns the published Instagram Media ID.
     """
     if config.make_ig_webhook_url and config.make_ig_webhook_url.startswith("https://"):
-        return upload_to_instagram_via_make(video_path, metadata, config)
+        return upload_to_instagram_via_make(video_path, metadata, config, gdrive_file_id=gdrive_file_id)
 
     file_size = video_path.stat().st_size
 
