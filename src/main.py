@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import json
 import logging
 import sys
@@ -32,6 +33,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Download video from Drive and generate AI captions/metadata without publishing.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass schedule gatekeeper and post immediately.",
+    )
     return parser.parse_args()
 
 
@@ -41,6 +47,37 @@ def run() -> int:
     config.validate(platform=args.platform, dry_run=args.dry_run)
 
     gdrive = GDriveManager(config)
+
+    # Schedule Gatekeeper (obey Telegram bot toggles)
+    if not args.dry_run and not args.force:
+        schedule = gdrive.get_schedule_config()
+        if not schedule.get("all_posting_enabled", True):
+            logger.info("[GATEKEEPER] All postings paused by Uday via Telegram — exiting cleanly.")
+            return 0
+
+        utc_now = datetime.datetime.now(datetime.timezone.utc)
+        ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
+        hour = ist_now.hour
+
+        slots = schedule.get("slots", {})
+        active_slot_key = None
+        if 5 <= hour <= 10:
+            active_slot_key = "morning"
+        elif 11 <= hour <= 15:
+            active_slot_key = "afternoon"
+        elif 17 <= hour <= 22:
+            active_slot_key = "evening"
+
+        if active_slot_key and active_slot_key in slots:
+            slot_info = slots[active_slot_key]
+            if not slot_info.get("enabled", True):
+                logger.info(
+                    "[GATEKEEPER] %s slot (%s) is toggled OFF by Uday via Telegram — skipping upload.",
+                    active_slot_key.capitalize(),
+                    slot_info.get("name", active_slot_key),
+                )
+                return 0
+
     video_item = gdrive.get_next_queued_video(platform=args.platform)
 
     if not video_item:

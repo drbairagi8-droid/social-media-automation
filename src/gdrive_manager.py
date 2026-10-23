@@ -1,7 +1,8 @@
 import io
+import json
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -121,6 +122,25 @@ class GDriveManager:
             fields="id, appProperties",
         ).execute()
         return props
+
+    def get_schedule_config(self) -> Dict[str, Any]:
+        """Fetches and parses schedule_config.json from Google Drive."""
+        query = (
+            f"name = 'schedule_config.json' "
+            f"and '{self.config.gdrive_queue_folder_id}' in parents "
+            "and trashed = false"
+        )
+        try:
+            res = self.service.files().list(q=query, fields="files(id, name)").execute()
+            files = res.get("files", [])
+            if not files:
+                return {"all_posting_enabled": True, "slots": {}}
+            f_id = files[0]["id"]
+            content = self.service.files().get_media(fileId=f_id).execute().decode("utf-8")
+            return json.loads(content)
+        except Exception as exc:
+            logger.warning("Could not read schedule_config.json from Drive (%s); defaulting to enabled.", exc)
+            return {"all_posting_enabled": True, "slots": {}}
 
     def archive_completed_video(self, file_id: str, file_name: str) -> None:
         """Moves a fully posted video from the Queue folder to the Archive ('Posted') folder."""
