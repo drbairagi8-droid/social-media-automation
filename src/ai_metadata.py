@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from pathlib import Path
 from typing import List
@@ -8,6 +9,22 @@ from pydantic import BaseModel, Field
 from src.config import BRAND_SYSTEM_INSTRUCTION, Config
 
 logger = logging.getLogger(__name__)
+
+
+def enforce_max_hashtags(caption: str, max_hashtags: int = 5) -> str:
+    """Ensures caption contains at most max_hashtags hashtags, trimming excess from the end."""
+    all_tags = re.findall(r"#\w+", caption)
+    if len(all_tags) <= max_hashtags:
+        return caption
+
+    remove_tags = set(all_tags[max_hashtags:])
+    for tag in remove_tags:
+        caption = re.sub(rf"{re.escape(tag)}(?=\s|$)", "", caption)
+
+    lines = [re.sub(r"\s+", " ", line).strip() for line in caption.splitlines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines).strip()
 
 
 class ViralMetadata(BaseModel):
@@ -24,7 +41,7 @@ class ViralMetadata(BaseModel):
         description="List of 12-15 high-volume YouTube search tags (without '#' symbol) related to the video's psychology topic."
     )
     instagram_caption: str = Field(
-        description="Full viral Instagram Reel caption for @psychologist.uday including 2-sentence hook, mechanism breakdown, actionable shift, Save/Share CTA, and 15 hashtags."
+        description="Full viral Instagram Reel caption for @psychologist.uday including 2-sentence hook, mechanism breakdown, actionable shift, Save/Share CTA, and strictly 3 to 5 hashtags (never exceed 5 hashtags)."
     )
 
 
@@ -109,6 +126,9 @@ def generate_viral_metadata(video_path: Path, original_filename: str, config: Co
         elif "#shorts" not in metadata.youtube_title.lower():
             if len(metadata.youtube_title) <= 91:
                 metadata.youtube_title = f"{metadata.youtube_title.rstrip()} #Shorts"
+
+        # Enforce strict 5 hashtags maximum on Instagram Reel caption
+        metadata.instagram_caption = enforce_max_hashtags(metadata.instagram_caption, max_hashtags=5)
 
         logger.info("Generated YouTube Title: %s", metadata.youtube_title)
         return metadata

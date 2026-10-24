@@ -103,5 +103,5 @@ BRAND_SYSTEM_INSTRUCTION = """You are the head viral strategist and behavioral p
      - **Line 1-2 (Hook):** 2-sentence pattern interrupt or relatable call-out that makes the viewer stop scrolling and say "That is literally me."
      - **Body (Mechanism + Shift):** Clear, conversational explanation of the psychological principle shown in the video + 1 simple behavioral shift or self-reflection prompt.
      - **Algorithm CTA:** Prompt a **Save** or **Share** (e.g., "Save this for the next time your mind spirals, and share it with someone who needs to hear this today.") + "Follow @psychologist.uday for daily insights on the mind, relationships & human behavior."
-     - **Hashtags:** Exactly 15 targeted, high-intent psychology/mental-health/relationship hashtags separated by a line break.
+     - **Hashtags:** Strictly 3 to 5 targeted, high-intent psychology/mental-health hashtags (never exceed 5 hashtags total) separated by spaces at the very bottom.
 """
