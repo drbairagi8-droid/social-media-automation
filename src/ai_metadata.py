@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import re
 import time
@@ -92,28 +93,40 @@ def generate_viral_metadata(video_path: Path, original_filename: str, config: Co
             )
         )
 
+        def _call_gemini_model(m_name: str):
+            return client.interactions.create(
+                model=m_name,
+                system_instruction=BRAND_SYSTEM_INSTRUCTION,
+                input=[
+                    {"type": "video", "uri": uploaded_file.uri, "mime_type": uploaded_file.mime_type or "video/mp4"},
+                    {"type": "text", "text": prompt},
+                ],
+                response_format={
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": ViralMetadata.model_json_schema(),
+                },
+                timeout=90.0,
+            )
+
         interaction = None
         last_err = None
         for model_name in candidate_models:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             try:
-                logger.info("Generating viral caption & YouTube/LinkedIn metadata with %s...", model_name)
-                interaction = client.interactions.create(
-                    model=model_name,
-                    system_instruction=BRAND_SYSTEM_INSTRUCTION,
-                    input=[
-                        {"type": "video", "uri": uploaded_file.uri, "mime_type": uploaded_file.mime_type or "video/mp4"},
-                        {"type": "text", "text": prompt},
-                    ],
-                    response_format={
-                        "type": "text",
-                        "mime_type": "application/json",
-                        "schema": ViralMetadata.model_json_schema(),
-                    },
-                )
-                break
+                logger.info("Generating viral caption & YouTube/Instagram metadata with %s (timeout=90s)...", model_name)
+                future = executor.submit(_call_gemini_model, model_name)
+                interaction = future.result(timeout=100.0)
+                if interaction and getattr(interaction, "output_text", None):
+                    break
+            except concurrent.futures.TimeoutError:
+                last_err = TimeoutError(f"Model {model_name} did not respond within 100 seconds.")
+                logger.warning("Model %s timed out after 100s; falling back to next candidate model...", model_name)
             except Exception as exc:
                 last_err = exc
-                logger.warning("Model %s unavailable (%s); trying next fallback model...", model_name, exc)
+                logger.warning("Model %s unavailable (%s); falling back to next candidate model...", model_name, exc)
+            finally:
+                executor.shutdown(wait=False)
 
         if interaction is None:
             raise RuntimeError(f"All Gemini models failed. Last error: {last_err}") from last_err
