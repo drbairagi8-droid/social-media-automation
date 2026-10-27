@@ -7,7 +7,7 @@ from typing import List
 from google import genai
 from pydantic import BaseModel, Field
 
-from src.config import BRAND_SYSTEM_INSTRUCTION, Config
+from src.config import BRAND_SYSTEM_INSTRUCTION, PSYKETCH_SYSTEM_INSTRUCTION, Config
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +73,26 @@ def generate_viral_metadata(video_path: Path, original_filename: str, config: Co
             elapsed += 5
             uploaded_file = client.files.get(name=uploaded_file.name)
 
-        prompt = (
-            f"Watch and listen to this vertical video carefully (original file name: '{original_filename}').\n"
-            "Analyze the exact spoken hook, visual text/animations, psychological concept, and emotional payoff.\n"
-            "Generate the structured viral metadata for:\n"
-            "1. YouTube Shorts channel: TheKyunProject\n"
-            "2. Instagram Reels account: @psychologist.uday\n"
-            "Ensure the YouTube title is under 95 characters and ends with #Shorts."
-        )
+        if getattr(config, "profile", "uday") == "psyketch":
+            prompt = (
+                f"Watch and listen to this vertical video carefully (original file name: '{original_filename}').\n"
+                "Analyze the exact spoken hook, visual text/animations, psychological concept, and emotional storytelling payoff.\n"
+                "Generate structured viral storytelling metadata for a US & global English audience:\n"
+                "1. YouTube Shorts channel: @psyketch.studio\n"
+                "2. Instagram Reels account: @psyketch.studio\n"
+                "Ensure the YouTube title is under 95 characters and ends with #Shorts."
+            )
+            system_instruction = PSYKETCH_SYSTEM_INSTRUCTION
+        else:
+            prompt = (
+                f"Watch and listen to this vertical video carefully (original file name: '{original_filename}').\n"
+                "Analyze the exact spoken hook, visual text/animations, psychological concept, and emotional payoff.\n"
+                "Generate the structured viral metadata for:\n"
+                "1. YouTube Shorts channel: TheKyunProject\n"
+                "2. Instagram Reels account: @psychologist.uday\n"
+                "Ensure the YouTube title is under 95 characters and ends with #Shorts."
+            )
+            system_instruction = BRAND_SYSTEM_INSTRUCTION
 
         candidate_models = list(
             dict.fromkeys(
@@ -97,7 +109,7 @@ def generate_viral_metadata(video_path: Path, original_filename: str, config: Co
         def _call_gemini_model(m_name: str):
             return client.interactions.create(
                 model=m_name,
-                system_instruction=BRAND_SYSTEM_INSTRUCTION,
+                system_instruction=system_instruction,
                 input=[
                     {"type": "video", "uri": uploaded_file.uri, "mime_type": uploaded_file.mime_type or "video/mp4"},
                     {"type": "text", "text": prompt},

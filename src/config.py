@@ -13,6 +13,8 @@ TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 @dataclass(frozen=True)
 class Config:
+    profile: str = "uday"
+
     # Gemini AI
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "").strip()
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
@@ -40,6 +42,35 @@ class Config:
     youtube_category_id: str = os.getenv("YOUTUBE_CATEGORY_ID", "27").strip()  # 27 = Education
     youtube_privacy_status: str = os.getenv("YOUTUBE_PRIVACY_STATUS", "public").strip()
 
+    @classmethod
+    def from_profile(cls, profile: str = "uday") -> "Config":
+        """Loads configuration for the specified brand profile ('uday' or 'psyketch')."""
+        if profile == "psyketch":
+            return cls(
+                profile="psyketch",
+                gemini_api_key=(
+                    os.getenv("PSYKETCH_GEMINI_API_KEY", "").strip()
+                    or os.getenv("GEMINI_API_KEY", "").strip()
+                ),
+                gemini_model=os.getenv("PSYKETCH_GEMINI_MODEL", "gemini-3.8-flash").strip(),
+                google_client_id=os.getenv("PSYKETCH_GOOGLE_CLIENT_ID", "").strip(),
+                google_client_secret=os.getenv("PSYKETCH_GOOGLE_CLIENT_SECRET", "").strip(),
+                google_refresh_token=os.getenv("PSYKETCH_GOOGLE_REFRESH_TOKEN", "").strip(),
+                youtube_refresh_token=(
+                    os.getenv("PSYKETCH_YOUTUBE_REFRESH_TOKEN", "").strip()
+                    or os.getenv("PSYKETCH_GOOGLE_REFRESH_TOKEN", "").strip()
+                ),
+                gdrive_queue_folder_id=os.getenv("PSYKETCH_GDRIVE_QUEUE_FOLDER_ID", "").strip(),
+                gdrive_archive_folder_id=os.getenv("PSYKETCH_GDRIVE_ARCHIVE_FOLDER_ID", "").strip(),
+                ig_user_id=os.getenv("PSYKETCH_IG_USER_ID", "").strip(),
+                ig_access_token=os.getenv("PSYKETCH_IG_ACCESS_TOKEN", "").strip(),
+                make_ig_webhook_url=os.getenv("PSYKETCH_MAKE_IG_WEBHOOK_URL", "").strip(),
+                youtube_category_id=os.getenv("PSYKETCH_YOUTUBE_CATEGORY_ID", "27").strip(),
+                youtube_privacy_status=os.getenv("PSYKETCH_YOUTUBE_PRIVACY_STATUS", "public").strip(),
+            )
+        # Default: uday (exact existing configuration)
+        return cls()
+
     @property
     def is_instagram_configured(self) -> bool:
         has_direct_graph = bool(
@@ -55,24 +86,28 @@ class Config:
         return has_direct_graph or has_make_webhook
 
     def validate(self, platform: str = "all", dry_run: bool = False) -> None:
+        prefix = "PSYKETCH_" if self.profile == "psyketch" else ""
         missing = []
         if not self.gemini_api_key or self.gemini_api_key.startswith("your_"):
-            missing.append("GEMINI_API_KEY")
+            missing.append(f"{prefix}GEMINI_API_KEY" if self.profile == "psyketch" and os.getenv("PSYKETCH_GEMINI_API_KEY") else "GEMINI_API_KEY")
         if not self.google_client_id or self.google_client_id.startswith("your_"):
-            missing.append("GOOGLE_CLIENT_ID")
+            missing.append(f"{prefix}GOOGLE_CLIENT_ID")
         if not self.google_client_secret or self.google_client_secret.startswith("your_"):
-            missing.append("GOOGLE_CLIENT_SECRET")
+            missing.append(f"{prefix}GOOGLE_CLIENT_SECRET")
         if not self.google_refresh_token or self.google_refresh_token.startswith("your_"):
-            missing.append("GOOGLE_REFRESH_TOKEN")
+            missing.append(f"{prefix}GOOGLE_REFRESH_TOKEN")
         if not self.gdrive_queue_folder_id or self.gdrive_queue_folder_id.startswith("your_"):
-            missing.append("GDRIVE_QUEUE_FOLDER_ID")
+            missing.append(f"{prefix}GDRIVE_QUEUE_FOLDER_ID")
 
         if not dry_run and platform == "instagram" and not self.is_instagram_configured:
-            missing.extend(["IG_USER_ID", "IG_ACCESS_TOKEN"])
+            if self.profile == "psyketch":
+                missing.append(f"{prefix}MAKE_IG_WEBHOOK_URL (or {prefix}IG_USER_ID & {prefix}IG_ACCESS_TOKEN)")
+            else:
+                missing.extend(["IG_USER_ID", "IG_ACCESS_TOKEN"])
 
         if missing:
             raise ValueError(
-                f"Missing required environment variables: {', '.join(missing)}.\n"
+                f"Missing required environment variables for profile '{self.profile}': {', '.join(missing)}.\n"
                 "Please check your .env file locally or your GitHub Repository Secrets."
             )
 
@@ -104,4 +139,40 @@ BRAND_SYSTEM_INSTRUCTION = """You are the head viral strategist and behavioral p
      - **Body (Mechanism + Shift):** Clear, conversational explanation of the psychological principle shown in the video + 1 simple behavioral shift or self-reflection prompt.
      - **Algorithm CTA:** Prompt a **Save** or **Share** (e.g., "Save this for the next time your mind spirals, and share it with someone who needs to hear this today.") + "Follow @psychologist.uday for daily insights on the mind, relationships & human behavior."
      - **Hashtags:** Strictly 3 to 5 targeted, high-intent psychology/mental-health hashtags (never exceed 5 hashtags total) separated by spaces at the very bottom.
+"""
+
+
+PSYKETCH_SYSTEM_INSTRUCTION = """You are the lead storyteller, viral behavioral strategist, and scriptwriter for @psyketch.studio (Instagram Reels & YouTube Shorts).
+
+Brand Identity:
+- Name: **@psyketch.studio** (YouTube Shorts & Instagram Reels)
+- Niche: Relatable psychological storytelling, everyday human quirks, subtle subconscious patterns, cognitive biases, and narrative-driven insights.
+- Audience: Global English-speaking audience, primarily US young adults, creatives, thinkers, and professionals.
+- Tone: Warm, observant, cinematic, conversational, and deeply relatable. Zero clinical jargon, zero preachy therapy lecturing. It should feel like a perceptive friend putting into words a feeling you've had a thousand times but never knew how to describe.
+
+Content Pillars:
+1. Relatable Micro-Moments (Why we freeze before replying to a text, phantom exhaustion after socializing, why you can't start a task until the clock hits an even number).
+2. Hidden Emotional Mechanisms (People-pleasing as a survival instinct, why praise makes you uncomfortable, initiation inertia, revenge bedtime procrastination).
+3. Perspective Shifts (How to gently disarm your inner critic, the 1-second behavioral shift, why resting isn't failing).
+
+Output Rules:
+1. YouTube Shorts (@psyketch.studio):
+   - Title Rules:
+     - Under 85 characters, narrative/curiosity hook that makes the viewer stop and say "Wait, I do this."
+     - Must end with `#Shorts`.
+     - Example: "Why You Can't Rest Even When You're Exhausted #Shorts"
+   - Description Rules:
+     - High-retention opening 2 lines setting up the relatable story.
+     - 3-4 bullet breakdown of the psychological insight.
+     - Subscribe CTA: "Subscribe to @psyketch.studio for daily relatable psychology & human behavior stories."
+     - Include 5-8 relevant hashtags at the bottom.
+   - Search Tags: 12-15 high-volume search tags (comma-separated, without '#' symbol).
+
+2. Instagram Reels (@psyketch.studio):
+   - Caption Structure:
+     - Line 1-2 (Hook): An evocative storytelling pattern interrupt (e.g., "There’s a strange moment when you finally have free time, but your body goes completely numb and unable to enjoy it...").
+     - Body (Story + Mechanism): A relatable breakdown of why our brains do this, explained with narrative empathy and clarity.
+     - Actionable Shift: 1 gentle micro-action or mental reframing.
+     - Community CTA: "Save this to remind yourself later, and share it with someone who needs this today. Follow @psyketch.studio for daily stories about why we do what we do."
+     - Hashtags: Strictly 3 to 5 targeted, high-intent psychology and storytelling hashtags (never exceed 5 hashtags total) separated by spaces at the very bottom.
 """

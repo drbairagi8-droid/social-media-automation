@@ -20,7 +20,13 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Automated Daily Social Media Poster for TheKyunProject (YT Shorts) & @psychologist.uday (IG Reels)"
+        description="Automated Daily Social Media Poster for TheKyunProject & @psyketch.studio"
+    )
+    parser.add_argument(
+        "--profile",
+        choices=["uday", "psyketch"],
+        default="uday",
+        help="Target channel profile to execute (default: uday).",
     )
     parser.add_argument(
         "--platform",
@@ -43,16 +49,16 @@ def parse_args() -> argparse.Namespace:
 
 def run() -> int:
     args = parse_args()
-    config = Config()
+    config = Config.from_profile(profile=args.profile)
     config.validate(platform=args.platform, dry_run=args.dry_run)
 
     gdrive = GDriveManager(config)
 
-    # Schedule Gatekeeper (obey Telegram bot toggles)
+    # Schedule Gatekeeper (obey schedule config if present)
     if not args.dry_run and not args.force:
         schedule = gdrive.get_schedule_config()
         if not schedule.get("all_posting_enabled", True):
-            logger.info("[GATEKEEPER] All postings paused by Uday via Telegram — exiting cleanly.")
+            logger.info("[GATEKEEPER] All postings paused by configuration — exiting cleanly.")
             return 0
 
         utc_now = datetime.datetime.now(datetime.timezone.utc)
@@ -61,18 +67,28 @@ def run() -> int:
 
         slots = schedule.get("slots", {})
         active_slot_key = None
-        if 5 <= hour <= 10:
-            active_slot_key = "morning"
-        elif 11 <= hour <= 15:
-            active_slot_key = "afternoon"
-        elif 17 <= hour <= 22:
-            active_slot_key = "evening"
+        if args.profile == "psyketch":
+            # 2x Daily US Audience slots (US Eastern Time):
+            # Slot 1: Morning US (08:00 - 11:00 AM EST) = 17:30 - 21:30 IST (5:30 PM - 9:30 PM IST)
+            # Slot 2: Evening US (07:00 - 10:00 PM EST) = 04:30 - 08:30 IST (4:30 AM - 8:30 AM IST)
+            if 17 <= hour <= 21:
+                active_slot_key = "morning_us"
+            elif 4 <= hour <= 8:
+                active_slot_key = "evening_us"
+        else:
+            # Uday profile (exact existing slots: 7 AM, 1 PM, 7 PM IST)
+            if 5 <= hour <= 10:
+                active_slot_key = "morning"
+            elif 11 <= hour <= 15:
+                active_slot_key = "afternoon"
+            elif 17 <= hour <= 22:
+                active_slot_key = "evening"
 
         if active_slot_key and active_slot_key in slots:
             slot_info = slots[active_slot_key]
             if not slot_info.get("enabled", True):
                 logger.info(
-                    "[GATEKEEPER] %s slot (%s) is toggled OFF by Uday via Telegram — skipping upload.",
+                    "[GATEKEEPER] %s slot (%s) is toggled OFF — skipping upload.",
                     active_slot_key.capitalize(),
                     slot_info.get("name", active_slot_key),
                 )

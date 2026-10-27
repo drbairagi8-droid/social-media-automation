@@ -1,0 +1,97 @@
+name: Daily 2x US Poster (@psyketch.studio)
+
+on:
+  schedule:
+    # 09:00 AM EST (Morning US) = 13:00 UTC = 06:30 PM IST
+    - cron: '0 13 * * *'
+    # 08:00 PM EST (Prime Evening US) = 00:00 UTC = 05:30 AM IST
+    - cron: '0 0 * * *'
+
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform(s) to post to'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - youtube
+          - instagram
+      dry_run:
+        description: 'Dry run (generate AI captions/metadata only without posting)'
+        required: true
+        default: false
+        type: boolean
+      force:
+        description: 'Bypass schedule gatekeeper and post immediately'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: social-media-poster-psyketch
+  cancel-in-progress: false
+
+jobs:
+  publish-post-psyketch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Load .env secret if provided
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -n "$ENV_FILE_CONTENT" ]; then
+            printf "%s\n" "$ENV_FILE_CONTENT" > .env
+          fi
+
+      - name: Run Psyketch Automation
+        env:
+          PSYKETCH_GEMINI_API_KEY: ${{ secrets.PSYKETCH_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PSYKETCH_GOOGLE_CLIENT_ID: ${{ secrets.PSYKETCH_GOOGLE_CLIENT_ID }}
+          PSYKETCH_GOOGLE_CLIENT_SECRET: ${{ secrets.PSYKETCH_GOOGLE_CLIENT_SECRET }}
+          PSYKETCH_GOOGLE_REFRESH_TOKEN: ${{ secrets.PSYKETCH_GOOGLE_REFRESH_TOKEN }}
+          PSYKETCH_YOUTUBE_REFRESH_TOKEN: ${{ secrets.PSYKETCH_YOUTUBE_REFRESH_TOKEN }}
+          PSYKETCH_GDRIVE_QUEUE_FOLDER_ID: ${{ secrets.PSYKETCH_GDRIVE_QUEUE_FOLDER_ID }}
+          PSYKETCH_GDRIVE_ARCHIVE_FOLDER_ID: ${{ secrets.PSYKETCH_GDRIVE_ARCHIVE_FOLDER_ID }}
+          PSYKETCH_MAKE_IG_WEBHOOK_URL: ${{ secrets.PSYKETCH_MAKE_IG_WEBHOOK_URL }}
+          PSYKETCH_IG_USER_ID: ${{ secrets.PSYKETCH_IG_USER_ID }}
+          PSYKETCH_IG_ACCESS_TOKEN: ${{ secrets.PSYKETCH_IG_ACCESS_TOKEN }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          # Remove empty env vars so python-dotenv can load values from .env if ENV_FILE was used
+          for var in PSYKETCH_GEMINI_API_KEY GEMINI_API_KEY PSYKETCH_GOOGLE_CLIENT_ID PSYKETCH_GOOGLE_CLIENT_SECRET PSYKETCH_GOOGLE_REFRESH_TOKEN PSYKETCH_YOUTUBE_REFRESH_TOKEN PSYKETCH_GDRIVE_QUEUE_FOLDER_ID PSYKETCH_GDRIVE_ARCHIVE_FOLDER_ID PSYKETCH_MAKE_IG_WEBHOOK_URL PSYKETCH_IG_USER_ID PSYKETCH_IG_ACCESS_TOKEN; do
+            if [ -z "${!var}" ]; then
+              unset "$var"
+            fi
+          done
+          PLATFORM="${{ github.event.inputs.platform || 'all' }}"
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+          python -m src.main --profile psyketch --platform "$PLATFORM" $DRY_RUN_FLAG $FORCE_FLAG
