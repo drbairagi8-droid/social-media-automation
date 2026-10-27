@@ -61,7 +61,12 @@ jobs:
           ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
         run: |
           if [ -n "$ENV_FILE_CONTENT" ]; then
-            printf "%s\n" "$ENV_FILE_CONTENT" > .env
+            printf "%s\n" "$ENV_FILE_CONTENT" | tr -d '\r' > .env
+            echo "Loaded .env with $(wc -l < .env) lines."
+            echo "Keys present in loaded .env:"
+            grep -E '^[A-Z_]+=' .env | cut -d= -f1
+          else
+            echo "WARNING: ENV_FILE_CONTENT is empty!"
           fi
 
       - name: Run Psyketch Automation
@@ -79,7 +84,14 @@ jobs:
           PSYKETCH_IG_ACCESS_TOKEN: ${{ secrets.PSYKETCH_IG_ACCESS_TOKEN }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          # Remove empty env vars so python-dotenv can load values from .env if ENV_FILE was used
+          # If .env exists (written from ENV_FILE), export all variables into environment
+          if [ -f .env ]; then
+            set -a
+            # Strip potential carriage returns and source
+            source <(tr -d '\r' < .env)
+            set +a
+          fi
+          # Remove empty env vars so values from .env take precedence
           for var in PSYKETCH_GEMINI_API_KEY GEMINI_API_KEY PSYKETCH_GOOGLE_CLIENT_ID PSYKETCH_GOOGLE_CLIENT_SECRET PSYKETCH_GOOGLE_REFRESH_TOKEN PSYKETCH_YOUTUBE_REFRESH_TOKEN PSYKETCH_GDRIVE_QUEUE_FOLDER_ID PSYKETCH_GDRIVE_ARCHIVE_FOLDER_ID PSYKETCH_MAKE_IG_WEBHOOK_URL PSYKETCH_IG_USER_ID PSYKETCH_IG_ACCESS_TOKEN; do
             if [ -z "${!var}" ]; then
               unset "$var"
