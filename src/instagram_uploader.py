@@ -58,8 +58,26 @@ def upload_to_instagram_via_make(
                 fileId=gdrive_file_id,
                 body={"role": "reader", "type": "anyone"},
             ).execute()
-            public_video_url = f"https://drive.usercontent.google.com/download?id={gdrive_file_id}&export=download"
-            logger.info("Using high-speed direct Google Drive CDN stream URL for Make.com: %s", public_video_url)
+            candidate_url = f"https://drive.usercontent.google.com/download?id={gdrive_file_id}&export=download&confirm=t"
+            with requests.get(
+                candidate_url,
+                headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-1023"},
+                stream=True,
+                timeout=30,
+            ) as check_resp:
+                content_type = check_resp.headers.get("Content-Type", "").lower()
+                if check_resp.ok and ("video/" in content_type or "application/octet-stream" in content_type):
+                    public_video_url = candidate_url
+                    logger.info(
+                        "Using verified direct Google Drive CDN stream URL (%s) for Make.com: %s",
+                        content_type,
+                        public_video_url,
+                    )
+                else:
+                    logger.warning(
+                        "Drive URL returned non-video Content-Type '%s'; falling back to direct host upload...",
+                        content_type,
+                    )
         except Exception as exc:
             logger.warning("Could not set Drive public stream link (%s); falling back to direct host upload...", exc)
 
