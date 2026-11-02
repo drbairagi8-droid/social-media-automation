@@ -76,12 +76,12 @@ def run() -> int:
             elif 4 <= hour <= 8:
                 active_slot_key = "evening_us"
         else:
-            # Uday profile (exact existing slots: 7 AM, 1 PM, 7 PM IST)
+            # Uday profile (slots: 6:00 AM, 12:00 PM, 5:30 PM IST)
             if 5 <= hour <= 10:
                 active_slot_key = "morning"
             elif 11 <= hour <= 15:
                 active_slot_key = "afternoon"
-            elif 17 <= hour <= 22:
+            elif 16 <= hour <= 22:
                 active_slot_key = "evening"
 
         if active_slot_key and active_slot_key in slots:

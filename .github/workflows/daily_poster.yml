@@ -2,12 +2,12 @@ name: Daily 3x Social Poster (TheKyunProject & @psychologist.uday)
 
 on:
   schedule:
-    # 7:00 AM IST = 01:30 UTC
-    - cron: '30 1 * * *'
-    # 1:00 PM IST = 07:30 UTC
-    - cron: '30 7 * * *'
-    # 7:00 PM IST = 13:30 UTC
-    - cron: '30 13 * * *'
+    # 6:00 AM IST = 00:30 UTC
+    - cron: '30 0 * * *'
+    # 12:00 PM IST = 06:30 UTC
+    - cron: '30 6 * * *'
+    # 5:30 PM IST = 12:00 UTC
+    - cron: '0 12 * * *'
 
   workflow_dispatch:
     inputs:

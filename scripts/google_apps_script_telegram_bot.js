@@ -2,7 +2,7 @@
  * Google Apps Script Webhook for @UdayPsychRadarBot
  * 
  * Provides an interactive 24/7 Telegram Control Center for Psychologist Uday:
- * - 1-tap toggles for Morning (7 AM), Afternoon (1 PM), Evening (7 PM)
+ * - 1-tap toggles for Morning (6:00 AM), Afternoon (12:00 PM), Evening (5:30 PM)
  * - Emergency Pause / Resume button
  * - Instant "Post Next Video Right Now" trigger (via GitHub Actions API)
  * - Live Google Drive Queue status counter
@@ -141,9 +141,9 @@ function buildDashboardPayload(config, queueInfo) {
   }
   text += "━━━━━━━━━━━━━━━━━━━━━━\n";
   text += "*Active Daily Slots:*\n";
-  text += (m ? "🟢" : "🔴") + " *Morning:* 07:00 AM IST\n";
-  text += (a ? "🟢" : "🔴") + " *Afternoon:* 01:00 PM IST\n";
-  text += (e ? "🟢" : "🔴") + " *Evening:* 07:00 PM IST\n";
+  text += (m ? "🟢" : "🔴") + " *Morning:* 06:00 AM IST\n";
+  text += (a ? "🟢" : "🔴") + " *Afternoon:* 12:00 PM IST\n";
+  text += (e ? "🟢" : "🔴") + " *Evening:* 05:30 PM IST\n";
 
   const keyboard = [
     [
@@ -177,9 +177,9 @@ function getScheduleConfig() {
   return {
     all_posting_enabled: true,
     slots: {
-      morning: { enabled: true, name: "Morning (07:00 AM IST)" },
-      afternoon: { enabled: true, name: "Afternoon (01:00 PM IST)" },
-      evening: { enabled: true, name: "Evening (07:00 PM IST)" }
+      morning: { enabled: true, name: "Morning (06:00 AM IST)" },
+      afternoon: { enabled: true, name: "Afternoon (12:00 PM IST)" },
+      evening: { enabled: true, name: "Evening (05:30 PM IST)" }
     }
   };
 }

@@ -15,9 +15,9 @@ def main():
     initial_config = {
         "all_posting_enabled": True,
         "slots": {
-            "morning": {"enabled": True, "name": "Morning (07:00 AM IST)"},
-            "afternoon": {"enabled": True, "name": "Afternoon (01:00 PM IST)"},
-            "evening": {"enabled": True, "name": "Evening (07:00 PM IST)"},
+            "morning": {"enabled": True, "name": "Morning (06:00 AM IST)"},
+            "afternoon": {"enabled": True, "name": "Afternoon (12:00 PM IST)"},
+            "evening": {"enabled": True, "name": "Evening (05:30 PM IST)"},
         },
     }
 
