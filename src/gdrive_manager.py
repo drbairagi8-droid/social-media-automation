@@ -42,9 +42,11 @@ class GDriveManager:
         platform: str = "all",
         active_slot: Optional[str] = None,
         video_slots: Optional[Dict[str, str]] = None,
+        force_file_id: Optional[str] = None,
     ) -> Optional[Dict]:
         """
         Fetches the next unposted video from the Google Drive Queue folder.
+        If `force_file_id` is set, selects that exact video immediately.
         If `active_slot` ('morning', 'afternoon', 'evening') is provided:
           1. Prioritizes a video explicitly assigned to `active_slot` in `video_slots` (or `appProperties.target_slot`).
           2. Falls back to the oldest unassigned ('auto') video in the queue.
@@ -90,6 +92,12 @@ class GDriveManager:
         if not eligible_files:
             logger.info("All videos in the Queue folder have already been posted for platform=%s.", platform)
             return None
+
+        if force_file_id:
+            for item in eligible_files:
+                if item["id"] == force_file_id:
+                    logger.info("[SLOT PICKER] Selected explicitly requested video (force_file_id): '%s'", item["name"])
+                    return item
 
         if not active_slot or active_slot not in ("morning", "afternoon", "evening"):
             return eligible_files[0]

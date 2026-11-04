@@ -70,12 +70,12 @@ def run() -> int:
         elif 4 <= hour <= 8:
             active_slot_key = "evening_us"
     else:
-        # Uday profile (slots: 6:00 AM, 12:00 PM, 5:30 PM IST)
+        # Uday profile (slots: 6:00 AM, 12:00 PM, 5:30 PM IST; cover all 24h so manual runs always map to a slot)
         if 5 <= hour <= 10:
             active_slot_key = "morning"
         elif 11 <= hour <= 15:
             active_slot_key = "afternoon"
-        elif 16 <= hour <= 22:
+        else:
             active_slot_key = "evening"
 
     # Schedule Gatekeeper (obey schedule config if present)
@@ -99,6 +99,7 @@ def run() -> int:
         platform=args.platform,
         active_slot=active_slot_key,
         video_slots=schedule.get("video_slots", {}),
+        force_file_id=schedule.get("force_file_id"),
     )
 
     if not video_item:
