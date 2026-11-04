@@ -17,7 +17,7 @@ class Config:
 
     # Gemini AI
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "").strip()
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 
     # Google OAuth2 (Drive + YouTube)
     google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "").strip()
@@ -56,7 +56,7 @@ class Config:
                     os.getenv("PSYKETCH_GEMINI_API_KEY", "").strip()
                     or os.getenv("GEMINI_API_KEY", "").strip()
                 ),
-                gemini_model=os.getenv("PSYKETCH_GEMINI_MODEL", "gemini-3.8-flash").strip(),
+                gemini_model=os.getenv("PSYKETCH_GEMINI_MODEL", "gemini-3.5-flash-lite").strip(),
                 google_client_id=os.getenv("PSYKETCH_GOOGLE_CLIENT_ID", "").strip(),
                 google_client_secret=os.getenv("PSYKETCH_GOOGLE_CLIENT_SECRET", "").strip(),
                 google_refresh_token=os.getenv("PSYKETCH_GOOGLE_REFRESH_TOKEN", "").strip(),
