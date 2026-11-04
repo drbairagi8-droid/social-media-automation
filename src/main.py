@@ -8,6 +8,7 @@ from src.ai_metadata import generate_viral_metadata
 from src.config import Config
 from src.gdrive_manager import GDriveManager
 from src.instagram_uploader import upload_to_instagram
+from src.telegram_notifier import notify_empty_queue, notify_fatal_error, notify_post_result
 from src.youtube_uploader import upload_to_youtube
 
 logging.basicConfig(
@@ -96,12 +97,14 @@ def run() -> int:
 
     video_item = gdrive.get_next_queued_video(
         platform=args.platform,
-        active_slot=None if args.force else active_slot_key,
+        active_slot=active_slot_key,
         video_slots=schedule.get("video_slots", {}),
     )
 
     if not video_item:
         logger.info("Queue is empty — nothing to post right now. Exiting cleanly.")
+        if not args.dry_run:
+            notify_empty_queue(config=config, slot_key=active_slot_key)
         return 0
 
     file_id = video_item["id"]
@@ -113,11 +116,16 @@ def run() -> int:
 
     try:
         # 1. Generate viral metadata by letting Gemini watch the video
-        metadata = generate_viral_metadata(
-            video_path=local_video_path,
-            original_filename=file_name,
-            config=config,
-        )
+        try:
+            metadata = generate_viral_metadata(
+                video_path=local_video_path,
+                original_filename=file_name,
+                config=config,
+            )
+        except Exception as exc:
+            if not args.dry_run:
+                notify_fatal_error(config=config, file_name=file_name, slot_key=active_slot_key, error_msg=str(exc))
+            raise
 
         print("\n" + "=" * 72)
         print("GENERATED VIRAL METADATA PREVIEW")
@@ -132,11 +140,12 @@ def run() -> int:
         errors = []
         yt_done = props.get("youtube_posted") == "true"
         ig_done = props.get("instagram_posted") == "true"
+        yt_video_id = props.get("youtube_video_id")
 
         # 2. Post to YouTube Shorts (TheKyunProject) with anti-duplicate guard
         if args.platform in ("all", "youtube"):
             if yt_done:
-                logger.info("[SAFEGUARD] Video '%s' already posted to YouTube (ID: %s) — skipping.", file_name, props.get("youtube_video_id"))
+                logger.info("[SAFEGUARD] Video '%s' already posted to YouTube (ID: %s) — skipping.", file_name, yt_video_id)
             else:
                 try:
                     yt_video_id = upload_to_youtube(local_video_path, metadata, config)
@@ -184,6 +193,18 @@ def run() -> int:
         if should_archive:
             logger.info("[SAFEGUARD] Both targets satisfied! Moving '%s' from Queue to Archive folder...", file_name)
             gdrive.archive_completed_video(file_id=file_id, file_name=file_name)
+
+        remaining_count = gdrive.count_remaining_videos()
+        notify_post_result(
+            config=config,
+            file_name=file_name,
+            youtube_title=metadata.youtube_title,
+            slot_key=active_slot_key,
+            yt_video_id=yt_video_id,
+            ig_done=ig_done,
+            remaining_count=remaining_count,
+            errors=errors,
+        )
 
         if errors:
             logger.error("Completed with errors: %s", "; ".join(errors))

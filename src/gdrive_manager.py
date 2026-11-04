@@ -133,6 +133,20 @@ class GDriveManager:
         )
         return None
 
+    def count_remaining_videos(self) -> int:
+        """Returns the number of video files remaining in the Google Drive Queue folder."""
+        query = (
+            f"'{self.config.gdrive_queue_folder_id}' in parents "
+            "and mimeType contains 'video/' "
+            "and trashed = false"
+        )
+        try:
+            res = self.service.files().list(q=query, pageSize=50, fields="files(id)").execute()
+            return len(res.get("files", []))
+        except Exception as exc:
+            logger.warning("Could not count remaining videos in Queue (%s).", exc)
+            return -1
+
     def download_video(self, file_id: str, file_name: str) -> Path:
         """Downloads a video from Google Drive to the local tmp/ directory."""
         safe_ext = Path(file_name).suffix or ".mp4"

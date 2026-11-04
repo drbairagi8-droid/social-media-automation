@@ -42,6 +42,10 @@ class Config:
     youtube_category_id: str = os.getenv("YOUTUBE_CATEGORY_ID", "27").strip()  # 27 = Education
     youtube_privacy_status: str = os.getenv("YOUTUBE_PRIVACY_STATUS", "public").strip()
 
+    # Telegram Notifications (@UdayPsychRadarBot)
+    telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
     @classmethod
     def from_profile(cls, profile: str = "uday") -> "Config":
         """Loads configuration for the specified brand profile ('uday' or 'psyketch')."""
