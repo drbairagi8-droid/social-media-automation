@@ -37,9 +37,18 @@ class GDriveManager:
         self.creds = get_google_credentials(config)
         self.service = build("drive", "v3", credentials=self.creds)
 
-    def get_next_queued_video(self, platform: str = "all") -> Optional[Dict]:
+    def get_next_queued_video(
+        self,
+        platform: str = "all",
+        active_slot: Optional[str] = None,
+        video_slots: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict]:
         """
-        Fetches the oldest unposted video from the Google Drive Queue folder.
+        Fetches the next unposted video from the Google Drive Queue folder.
+        If `active_slot` ('morning', 'afternoon', 'evening') is provided:
+          1. Prioritizes a video explicitly assigned to `active_slot` in `video_slots` (or `appProperties.target_slot`).
+          2. Falls back to the oldest unassigned ('auto') video in the queue.
+          3. Never pulls a video that is locked to a different time slot.
         Uses Drive `appProperties` to avoid double-posting if one platform already succeeded.
         """
         query = (
@@ -62,23 +71,66 @@ class GDriveManager:
             logger.info("No video files found in Google Drive Queue folder (%s).", self.config.gdrive_queue_folder_id)
             return None
 
+        eligible_files = []
         for file_item in files:
             props = file_item.get("appProperties") or {}
             yt_done = props.get("youtube_posted") == "true"
             ig_done = props.get("instagram_posted") == "true"
 
             if platform == "all":
-                # Check if any configured platform is still pending
                 need_yt = not yt_done
                 need_ig = self.config.is_instagram_configured and not ig_done
                 if need_yt or need_ig:
-                    return file_item
+                    eligible_files.append(file_item)
             elif platform == "youtube" and not yt_done:
-                return file_item
+                eligible_files.append(file_item)
             elif platform == "instagram" and not ig_done:
-                return file_item
+                eligible_files.append(file_item)
 
-        logger.info("All videos in the Queue folder have already been posted for platform=%s.", platform)
+        if not eligible_files:
+            logger.info("All videos in the Queue folder have already been posted for platform=%s.", platform)
+            return None
+
+        if not active_slot or active_slot not in ("morning", "afternoon", "evening"):
+            return eligible_files[0]
+
+        slot_map = video_slots or {}
+
+        def _get_assigned_slot(item: Dict) -> Optional[str]:
+            f_id = item["id"]
+            props = item.get("appProperties") or {}
+            raw_slot = (slot_map.get(f_id) or props.get("target_slot") or "").strip().lower()
+            if raw_slot == "night":
+                raw_slot = "evening"
+            if raw_slot in ("morning", "afternoon", "evening"):
+                return raw_slot
+            return None
+
+        # Priority 1: Video explicitly locked to the current active_slot
+        for item in eligible_files:
+            if _get_assigned_slot(item) == active_slot:
+                logger.info(
+                    "[SLOT PICKER] Selected video explicitly assigned to '%s' slot: '%s'",
+                    active_slot,
+                    item["name"],
+                )
+                return item
+
+        # Priority 2: Unassigned ('auto') video (never steal a video locked to another slot)
+        for item in eligible_files:
+            if _get_assigned_slot(item) is None:
+                logger.info(
+                    "[SLOT PICKER] No video locked to '%s'; selected unassigned auto video: '%s'",
+                    active_slot,
+                    item["name"],
+                )
+                return item
+
+        logger.info(
+            "[SLOT PICKER] All %d queued video(s) are locked to other time slots — skipping '%s' run.",
+            len(eligible_files),
+            active_slot,
+        )
         return None
 
     def download_video(self, file_id: str, file_name: str) -> Path:

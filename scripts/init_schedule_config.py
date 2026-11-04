@@ -19,6 +19,7 @@ def main():
             "afternoon": {"enabled": True, "name": "Afternoon (12:00 PM IST)"},
             "evening": {"enabled": True, "name": "Evening (05:30 PM IST)"},
         },
+        "video_slots": {},
     }
 
     content_bytes = json.dumps(initial_config, indent=2).encode("utf-8")
