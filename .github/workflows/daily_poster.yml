@@ -30,6 +30,11 @@ on:
         required: false
         default: false
         type: boolean
+      slot:
+        description: 'Optional target slot (morning, afternoon, evening)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -69,7 +74,9 @@ jobs:
       - name: Run Social Media Automation
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: 'gemini-3.8-flash'
+          GEMINI_MODEL: 'gemini-3.5-flash-lite'
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
@@ -96,4 +103,8 @@ jobs:
           if [ "${{ github.event.inputs.force }}" = "true" ]; then
             FORCE_FLAG="--force"
           fi
-          python -m src.main --platform "$PLATFORM" $DRY_RUN_FLAG $FORCE_FLAG
+          SLOT_FLAG=""
+          if [ -n "${{ github.event.inputs.slot }}" ]; then
+            SLOT_FLAG="--slot ${{ github.event.inputs.slot }}"
+          fi
+          python -m src.main --platform "$PLATFORM" $DRY_RUN_FLAG $FORCE_FLAG $SLOT_FLAG

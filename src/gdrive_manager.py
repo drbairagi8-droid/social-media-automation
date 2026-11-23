@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 from src.config import Config, TMP_DIR
 
@@ -215,6 +215,57 @@ class GDriveManager:
         except Exception as exc:
             logger.warning("Could not read schedule_config.json from Drive (%s); defaulting to enabled.", exc)
             return {"all_posting_enabled": True, "slots": {}}
+
+    def save_schedule_config(self, schedule: Dict[str, Any]) -> None:
+        """Persists updated schedule_config.json back to the Google Drive Queue folder."""
+        query = (
+            f"name = 'schedule_config.json' "
+            f"and '{self.config.gdrive_queue_folder_id}' in parents "
+            "and trashed = false"
+        )
+        try:
+            payload_bytes = json.dumps(schedule, indent=2, ensure_ascii=False).encode("utf-8")
+            media = MediaIoBaseUpload(io.BytesIO(payload_bytes), mimetype="application/json", resumable=False)
+            res = self.service.files().list(q=query, fields="files(id, name)").execute()
+            files = res.get("files", [])
+            if files:
+                self.service.files().update(fileId=files[0]["id"], media_body=media).execute()
+            else:
+                meta = {
+                    "name": "schedule_config.json",
+                    "parents": [self.config.gdrive_queue_folder_id],
+                    "mimeType": "application/json",
+                }
+                self.service.files().create(body=meta, media_body=media, fields="id").execute()
+        except Exception as exc:
+            logger.warning("Could not save schedule_config.json to Drive (%s).", exc)
+
+    def record_slot_posted(self, date_str: str, slot_key: Optional[str], file_id: Optional[str] = None) -> None:
+        """Records that a slot has published today and cleans up stale dates and consumed video_slots."""
+        if not slot_key:
+            return
+        schedule = self.get_schedule_config()
+        posted_map = schedule.get("posted_slots_by_date")
+        if not isinstance(posted_map, dict):
+            posted_map = {}
+
+        day_slots = posted_map.get(date_str)
+        if not isinstance(day_slots, list):
+            day_slots = []
+        if slot_key not in day_slots:
+            day_slots.append(slot_key)
+        posted_map[date_str] = day_slots
+
+        # Retain only the 7 most recent dates
+        for old_date in sorted(posted_map.keys())[:-7]:
+            posted_map.pop(old_date, None)
+        schedule["posted_slots_by_date"] = posted_map
+
+        # Also clean up consumed video_slots entry if present
+        if file_id and isinstance(schedule.get("video_slots"), dict):
+            schedule["video_slots"].pop(file_id, None)
+
+        self.save_schedule_config(schedule)
 
     def archive_completed_video(self, file_id: str, file_name: str) -> None:
         """Moves a fully posted video from the Queue folder to the Archive ('Posted') folder."""

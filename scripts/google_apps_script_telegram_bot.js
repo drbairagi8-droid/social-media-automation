@@ -28,8 +28,39 @@ function doPost(e) {
         return handleRemotePost(e);
       }
     }
+    return handleCorePost(e);
+  } catch (err) {
+    Logger.log("Error in doPost: " + err);
+  }
+  return HtmlService.createHtmlOutput("OK");
+}
+
+function handleRemotePost(e) {
+  return handleCorePost(e);
+}
+
+function handleCorePost(e) {
+  try {
+    // Automatically ensure the 15-minute exact-time Google Apps Script scheduler trigger is installed
+    ensureExactScheduleTriggerInstalled();
+
+    // If invoked by Google Apps Script's 15-minute Time-Driven Trigger (no postData), run exact schedule check
+    if (!e || !e.postData || !e.postData.contents) {
+      const statusMsg = runExactScheduleCheck();
+      Logger.log("[EXACT SCHEDULER] " + statusMsg);
+      return HtmlService.createHtmlOutput("OK: " + statusMsg);
+    }
 
     const update = JSON.parse(e.postData.contents);
+    if (update.internal_action === "install_exact_triggers") {
+      const msg = installExactScheduleTrigger(true);
+      const checkMsg = runExactScheduleCheck();
+      return ContentService.createTextOutput(JSON.stringify({ ok: true, trigger: msg, check: checkMsg })).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (update.internal_action === "run_exact_check") {
+      const checkMsg = runExactScheduleCheck();
+      return ContentService.createTextOutput(JSON.stringify({ ok: true, check: checkMsg })).setMimeType(ContentService.MimeType.JSON);
+    }
 
     // 1. Handle incoming text commands (/start, /schedule, /status, /slots)
     if (update.message) {
@@ -64,7 +95,7 @@ function doPost(e) {
       handleCallbackAction(chatId, messageId, callback.id, data);
     }
   } catch (err) {
-    Logger.log("Error in doPost: " + err);
+    Logger.log("Error in handleCorePost: " + err);
   }
   return HtmlService.createHtmlOutput("OK");
 }
@@ -413,7 +444,19 @@ function getQueueInfo(config) {
 }
 
 function triggerGitHubPostNow() {
+  triggerGitHubWorkflowDispatch(true, "");
+}
+
+function triggerGitHubWorkflowDispatch(forceFlag, slotKey) {
   const url = "https://api.github.com/repos/" + GITHUB_REPO + "/actions/workflows/daily_poster.yml/dispatches";
+  const inputs = {
+    platform: "all",
+    dry_run: false,
+    force: Boolean(forceFlag)
+  };
+  if (slotKey) {
+    inputs.slot = String(slotKey);
+  }
   UrlFetchApp.fetch(url, {
     method: "post",
     headers: {
@@ -425,13 +468,133 @@ function triggerGitHubPostNow() {
     muteHttpExceptions: true,
     payload: JSON.stringify({
       ref: "main",
-      inputs: {
-        platform: "all",
-        dry_run: false,
-        force: true
-      }
+      inputs: inputs
     })
   });
+}
+
+/**
+ * Exact-Time Google Apps Script Scheduler:
+ * Runs every 15 minutes via Google's Time-Driven Trigger to eliminate GitHub Actions' 1-8h cron delays.
+ * Because doPost() exists in the top-level deployed script, the time-driven trigger calls doPost()
+ * with no arguments, which automatically delegates into telegram_bot_remote.js -> runExactScheduleCheck()!
+ */
+function ensureExactScheduleTriggerInstalled() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty("EXACT_SCHEDULE_TRIGGER_V1") === "installed") {
+      return;
+    }
+    installExactScheduleTrigger(false);
+  } catch (err) {
+    Logger.log("Could not verify/install exact schedule trigger: " + err);
+  }
+}
+
+function installExactScheduleTrigger(forceReinstall) {
+  const triggers = ScriptApp.getProjectTriggers();
+  let found = false;
+  for (let i = 0; i < triggers.length; i++) {
+    const fn = triggers[i].getHandlerFunction();
+    if (fn === "doPost") {
+      if (forceReinstall) {
+        ScriptApp.deleteTrigger(triggers[i]);
+      } else {
+        found = true;
+      }
+    }
+  }
+  if (!found || forceReinstall) {
+    ScriptApp.newTrigger("doPost")
+      .timeBased()
+      .everyMinutes(15)
+      .create();
+  }
+  PropertiesService.getScriptProperties().setProperty("EXACT_SCHEDULE_TRIGGER_V1", "installed");
+  return "Installed 15-minute exact-time schedule trigger on doPost.";
+}
+
+function runExactScheduleCheck() {
+  const config = getScheduleConfig();
+  if (!config.all_posting_enabled) {
+    return "Paused (all_posting_enabled=false)";
+  }
+
+  // Compute current IST date and hour/minute
+  const nowUtcMs = new Date().getTime();
+  const istDateObj = new Date(nowUtcMs + (5.5 * 3600 * 1000));
+  const yyyy = istDateObj.getUTCFullYear();
+  const mm = String(istDateObj.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(istDateObj.getUTCDate()).padStart(2, "0");
+  const todayIst = yyyy + "-" + mm + "-" + dd;
+  const hour = istDateObj.getUTCHours();
+  const minute = istDateObj.getUTCMinutes();
+  const totalMinutes = hour * 60 + minute;
+
+  // Hard late-night blackout window (10:00 PM - 05:45 AM IST)
+  if (totalMinutes >= 22 * 60 || totalMinutes < 5 * 60 + 45) {
+    return "Late-night blackout (" + hour + ":" + minute + " IST)";
+  }
+
+  // Determine which slot should be active right now:
+  // Morning:   05:55 AM - 10:45 AM IST (355 - 645 mins)
+  // Afternoon: 11:55 AM - 03:45 PM IST (715 - 945 mins)
+  // Evening:   05:25 PM - 09:45 PM IST (1045 - 1305 mins)
+  let targetSlot = "";
+  if (totalMinutes >= 355 && totalMinutes <= 645) {
+    targetSlot = "morning";
+  } else if (totalMinutes >= 715 && totalMinutes <= 945) {
+    targetSlot = "afternoon";
+  } else if (totalMinutes >= 1045 && totalMinutes <= 1305) {
+    targetSlot = "evening";
+  } else {
+    return "Outside posting slot windows (" + hour + ":" + minute + " IST)";
+  }
+
+  const postedByDate = config.posted_slots_by_date || {};
+  const postedToday = Array.isArray(postedByDate[todayIst]) ? postedByDate[todayIst] : [];
+
+  const slots = config.slots || {};
+  const isSlotOn = function(k) {
+    return slots[k] && slots[k].enabled === true;
+  };
+
+  // Smart Catch-Up: if we are in the Afternoon window and Afternoon is OFF, check if Morning was missed today
+  if (targetSlot === "afternoon" && (!isSlotOn("afternoon") || postedToday.indexOf("afternoon") !== -1)) {
+    if (isSlotOn("morning") && postedToday.indexOf("morning") === -1) {
+      targetSlot = "morning";
+    }
+  }
+
+  if (!isSlotOn(targetSlot)) {
+    return "Slot " + targetSlot + " is OFF";
+  }
+  if (postedToday.indexOf(targetSlot) !== -1) {
+    return "Slot " + targetSlot + " already posted on " + todayIst;
+  }
+
+  // Prevent hammering GitHub workflow_dispatch while a run is already in progress (cooldown: 25 mins)
+  const dispatchedByDate = config.dispatched_slots_by_date || {};
+  const dayDispatches = dispatchedByDate[todayIst] || {};
+  const lastDispatchMs = dayDispatches[targetSlot] || 0;
+  if (nowUtcMs - lastDispatchMs < 25 * 60 * 1000) {
+    return "Cooldown active for " + targetSlot + " (dispatched recently)";
+  }
+
+  // Check if there is at least 1 video in the Queue before dispatching
+  const queueInfo = getQueueInfo(config);
+  if (queueInfo.count === 0) {
+    return "Queue is empty";
+  }
+
+  // Record dispatch timestamp and trigger GitHub workflow_dispatch for targetSlot
+  if (!config.dispatched_slots_by_date) config.dispatched_slots_by_date = {};
+  if (!config.dispatched_slots_by_date[todayIst]) config.dispatched_slots_by_date[todayIst] = {};
+  config.dispatched_slots_by_date[todayIst][targetSlot] = nowUtcMs;
+  saveScheduleConfig(config);
+
+  triggerGitHubWorkflowDispatch(false, targetSlot);
+  return "Dispatched GitHub Actions for slot: " + targetSlot + " at " + hour + ":" + minute + " IST";
 }
 
 function sendTelegramMessage(chatId, text) {

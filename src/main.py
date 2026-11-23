@@ -2,6 +2,7 @@ import argparse
 import datetime
 import json
 import logging
+import os
 import sys
 
 from src.ai_metadata import generate_viral_metadata
@@ -45,6 +46,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Bypass schedule gatekeeper and post immediately.",
     )
+    parser.add_argument(
+        "--slot",
+        choices=["morning", "afternoon", "evening", "morning_us", "evening_us"],
+        default="",
+        help="Explicitly target a specific posting slot (overrides clock/cron inference).",
+    )
     return parser.parse_args()
 
 
@@ -60,40 +67,116 @@ def run() -> int:
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
     hour = ist_now.hour
+    today_ist = ist_now.strftime("%Y-%m-%d")
+
+    posted_by_date = schedule.get("posted_slots_by_date") or {}
+    posted_today = posted_by_date.get(today_ist) if isinstance(posted_by_date, dict) else []
+    if not isinstance(posted_today, list):
+        posted_today = []
+
+    cron_expr = os.getenv("GITHUB_EVENT_SCHEDULE", "").strip()
+    CRON_TO_SLOT = {
+        "30 0 * * *": "morning",
+        "30 6 * * *": "afternoon",
+        "0 12 * * *": "evening",
+    }
 
     if args.profile == "psyketch":
         # 2x Daily US Audience slots (US Eastern Time):
         # Slot 1: Morning US (08:00 - 11:00 AM EST) = 17:30 - 21:30 IST (5:30 PM - 9:30 PM IST)
         # Slot 2: Evening US (07:00 - 10:00 PM EST) = 04:30 - 08:30 IST (4:30 AM - 8:30 AM IST)
-        if 17 <= hour <= 21:
+        if args.slot:
+            active_slot_key = args.slot
+        elif 17 <= hour <= 21:
             active_slot_key = "morning_us"
         elif 4 <= hour <= 8:
             active_slot_key = "evening_us"
     else:
-        # Uday profile (slots: 6:00 AM, 12:00 PM, 5:30 PM IST; cover all 24h so manual runs always map to a slot)
-        if 5 <= hour <= 10:
+        # Uday profile (slots: 6:00 AM, 12:00 PM, 5:30 PM IST)
+        if args.slot:
+            active_slot_key = args.slot
+        elif cron_expr in CRON_TO_SLOT:
+            active_slot_key = CRON_TO_SLOT[cron_expr]
+            logger.info("[SLOT DETECTOR] Matched GitHub cron '%s' -> '%s' slot.", cron_expr, active_slot_key)
+        elif 5 <= hour <= 10:
             active_slot_key = "morning"
         elif 11 <= hour <= 15:
             active_slot_key = "afternoon"
+        elif 16 <= hour <= 21:
+            active_slot_key = "evening"
         else:
+            # Late night (10:00 PM - 04:59 AM IST): only map to evening for manual --force/--dry-run
             active_slot_key = "evening"
 
-    # Schedule Gatekeeper (obey schedule config if present)
+    # Schedule Gatekeeper (obey schedule config, catch-up logic, and late-night blackout if not --force)
     if not args.dry_run and not args.force:
         if not schedule.get("all_posting_enabled", True):
             logger.info("[GATEKEEPER] All postings paused by configuration — exiting cleanly.")
             return 0
 
-        slots = schedule.get("slots", {})
-        if active_slot_key and active_slot_key in slots:
-            slot_info = slots[active_slot_key]
-            if not slot_info.get("enabled", True):
+        if args.profile == "uday":
+            # 1. Hard Late-Night Blackout Guard (10:00 PM - 04:59 AM IST)
+            if hour >= 22 or hour < 5:
                 logger.info(
-                    "[GATEKEEPER] %s slot (%s) is toggled OFF — skipping upload.",
-                    active_slot_key.capitalize(),
-                    slot_info.get("name", active_slot_key),
+                    "[GATEKEEPER] Late-night blackout window (%02d:%02d IST, 22:00-04:59 IST) — blocking delayed night post.",
+                    ist_now.hour,
+                    ist_now.minute,
                 )
                 return 0
+
+            slots = schedule.get("slots", {})
+            slot_enabled = lambda k: slots.get(k, {}).get("enabled", True)
+
+            # 2. Smart Catch-Up Logic: if Afternoon cron wakes up (or Morning cron was delayed into 11:00-15:59 IST)
+            # and Afternoon is OFF (or already posted), check if Morning was enabled and missed today!
+            if active_slot_key == "afternoon" and (not slot_enabled("afternoon") or "afternoon" in posted_today):
+                if slot_enabled("morning") and "morning" not in posted_today and 11 <= hour <= 15:
+                    logger.info(
+                        "[SMART CATCH-UP] Morning (06:00 AM IST) was missed earlier today and Afternoon is OFF — "
+                        "auto-promoting this run to fulfill the missed 'morning' slot!"
+                    )
+                    active_slot_key = "morning"
+
+            # 3. Stale Cron Window Guard: never let an Afternoon cron that got delayed past 4:00 PM IST pretend to be Evening
+            if active_slot_key == "afternoon" and hour >= 16:
+                if slot_enabled("afternoon") and "afternoon" not in posted_today:
+                    logger.info(
+                        "[GATEKEEPER] Afternoon cron was delayed until %02d:%02d IST (>=16:00 IST) — skipping stale run so it doesn't collide with Evening.",
+                        ist_now.hour,
+                        ist_now.minute,
+                    )
+                    return 0
+
+            # 4. Check if target slot is enabled
+            if active_slot_key and active_slot_key in slots:
+                slot_info = slots[active_slot_key]
+                if not slot_info.get("enabled", True):
+                    logger.info(
+                        "[GATEKEEPER] %s slot (%s) is toggled OFF — skipping upload.",
+                        active_slot_key.capitalize(),
+                        slot_info.get("name", active_slot_key),
+                    )
+                    return 0
+
+            # 5. Anti-Double-Post Guard: never publish twice for the same slot on the same IST day
+            if active_slot_key and active_slot_key in posted_today:
+                logger.info(
+                    "[SAFEGUARD] Slot '%s' has already published a video today (%s) — skipping duplicate run.",
+                    active_slot_key,
+                    today_ist,
+                )
+                return 0
+        else:
+            slots = schedule.get("slots", {})
+            if active_slot_key and active_slot_key in slots:
+                slot_info = slots[active_slot_key]
+                if not slot_info.get("enabled", True):
+                    logger.info(
+                        "[GATEKEEPER] %s slot (%s) is toggled OFF — skipping upload.",
+                        active_slot_key.capitalize(),
+                        slot_info.get("name", active_slot_key),
+                    )
+                    return 0
 
     video_item = gdrive.get_next_queued_video(
         platform=args.platform,
@@ -194,6 +277,9 @@ def run() -> int:
         if should_archive:
             logger.info("[SAFEGUARD] Both targets satisfied! Moving '%s' from Queue to Archive folder...", file_name)
             gdrive.archive_completed_video(file_id=file_id, file_name=file_name)
+            gdrive.record_slot_posted(date_str=today_ist, slot_key=active_slot_key, file_id=file_id)
+        elif yt_done or ig_done:
+            gdrive.record_slot_posted(date_str=today_ist, slot_key=active_slot_key)
 
         remaining_count = gdrive.count_remaining_videos()
         notify_post_result(
