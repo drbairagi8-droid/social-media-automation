@@ -77,8 +77,19 @@ def run() -> int:
     cron_expr = os.getenv("GITHUB_EVENT_SCHEDULE", "").strip()
     CRON_TO_SLOT = {
         "30 0 * * *": "morning",
+        "25 0 * * *": "morning",
+        "45 0 * * *": "morning",
+        "30 1 * * *": "morning",
+        "0 3 * * *": "morning",
         "30 6 * * *": "afternoon",
+        "25 6 * * *": "afternoon",
+        "50 6 * * *": "afternoon",
+        "0 8 * * *": "afternoon",
         "0 12 * * *": "evening",
+        "55 11 * * *": "evening",
+        "20 12 * * *": "evening",
+        "0 13 * * *": "evening",
+        "30 14 * * *": "evening",
     }
 
     if args.profile == "psyketch":
@@ -137,7 +148,14 @@ def run() -> int:
                     )
                     active_slot_key = "morning"
 
-            # 3. Stale Cron Window Guard: never let an Afternoon cron that got delayed past 4:00 PM IST pretend to be Evening
+            # 3. Stale Cron Window Guard: never let a Morning/Afternoon cron delayed past its window post out-of-window
+            if active_slot_key == "morning" and hour >= 16:
+                logger.info(
+                    "[GATEKEEPER] Morning cron was delayed until %02d:%02d IST (>=16:00 IST) — skipping stale run so it doesn't collide with Evening.",
+                    ist_now.hour,
+                    ist_now.minute,
+                )
+                return 0
             if active_slot_key == "afternoon" and hour >= 16:
                 if slot_enabled("afternoon") and "afternoon" not in posted_today:
                     logger.info(

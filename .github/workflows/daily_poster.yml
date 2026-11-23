@@ -2,12 +2,20 @@ name: Daily 3x Social Poster (TheKyunProject & @psychologist.uday)
 
 on:
   schedule:
-    # 6:00 AM IST = 00:30 UTC
-    - cron: '30 0 * * *'
-    # 12:00 PM IST = 06:30 UTC
-    - cron: '30 6 * * *'
-    # 5:30 PM IST = 12:00 UTC
-    - cron: '0 12 * * *'
+    # Morning Window (06:00 AM IST = 00:30 UTC) + retry pulses so GitHub cron drops/delays are caught automatically
+    - cron: '25 0 * * *'
+    - cron: '45 0 * * *'
+    - cron: '30 1 * * *'
+    - cron: '0 3 * * *'
+    # Afternoon Window (12:00 PM IST = 06:30 UTC) + retry pulse (also acts as Morning Catch-Up if Morning was missed)
+    - cron: '25 6 * * *'
+    - cron: '50 6 * * *'
+    - cron: '0 8 * * *'
+    # Evening Window (05:30 PM IST = 12:00 UTC) + retry pulses before 10:00 PM IST late-night cutoff
+    - cron: '55 11 * * *'
+    - cron: '20 12 * * *'
+    - cron: '0 13 * * *'
+    - cron: '30 14 * * *'
 
   workflow_dispatch:
     inputs:

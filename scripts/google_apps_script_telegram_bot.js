@@ -38,6 +38,7 @@ function doPost(e) {
 function handleRemotePost(e) {
   return handleCorePost(e);
 }
+this.handleRemotePost = handleRemotePost;
 
 function handleCorePost(e) {
   try {
@@ -53,9 +54,19 @@ function handleCorePost(e) {
 
     const update = JSON.parse(e.postData.contents);
     if (update.internal_action === "install_exact_triggers") {
-      const msg = installExactScheduleTrigger(true);
-      const checkMsg = runExactScheduleCheck();
-      return ContentService.createTextOutput(JSON.stringify({ ok: true, trigger: msg, check: checkMsg })).setMimeType(ContentService.MimeType.JSON);
+      let trigMsg = "";
+      try {
+        trigMsg = installExactScheduleTrigger(true);
+      } catch (te) {
+        trigMsg = "Trigger install error (likely missing ScriptApp scope): " + String(te);
+      }
+      let checkMsg = "";
+      try {
+        checkMsg = runExactScheduleCheck();
+      } catch (ce) {
+        checkMsg = "Schedule check error: " + String(ce);
+      }
+      return ContentService.createTextOutput(JSON.stringify({ ok: true, trigger: trigMsg, check: checkMsg })).setMimeType(ContentService.MimeType.JSON);
     }
     if (update.internal_action === "run_exact_check") {
       const checkMsg = runExactScheduleCheck();
