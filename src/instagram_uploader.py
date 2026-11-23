@@ -1,9 +1,12 @@
+import json
 import logging
+import subprocess
 import time
 from pathlib import Path
 from typing import Optional
 import requests
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 from src.ai_metadata import ViralMetadata
 from src.config import Config
@@ -14,6 +17,114 @@ logger = logging.getLogger(__name__)
 GRAPH_API_VERSION = "v21.0"
 GRAPH_BASE_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 RUPLOAD_BASE_URL = f"https://rupload.facebook.com/ig-api-upload/{GRAPH_API_VERSION}"
+
+MAX_SAFE_IG_MB = 45.0
+MAX_SAFE_IG_BITRATE = 6_000_000
+
+
+def _ensure_instagram_compliant_video(video_path: Path) -> Path:
+    """
+    Checks if the video exceeds Meta Instagram Reels ingestion limits (>45 MB, >6 Mbps bitrate,
+    non-BT.709 color transfer such as iec61966-2-1 sRGB, or >1080p width).
+    If so, transcodes it via ffmpeg to a crisp 1080x1920 H.264 BT.709 +faststart MP4 (~20-28 MB)
+    so Meta's Graph API media container never silently drops the Reel.
+    """
+    size_mb = video_path.stat().st_size / (1024 * 1024)
+    needs_transcode = size_mb > MAX_SAFE_IG_MB
+    reason = f"size={size_mb:.2f}MB > {MAX_SAFE_IG_MB}MB" if needs_transcode else ""
+
+    if not needs_transcode:
+        try:
+            probe_out = subprocess.check_output(
+                [
+                    "ffprobe",
+                    "-v",
+                    "quiet",
+                    "-print_format",
+                    "json",
+                    "-show_format",
+                    "-show_streams",
+                    str(video_path),
+                ],
+                timeout=20,
+            ).decode("utf-8", errors="replace")
+            info = json.loads(probe_out)
+            fmt_bitrate = int(info.get("format", {}).get("bit_rate") or 0)
+            if fmt_bitrate > MAX_SAFE_IG_BITRATE:
+                needs_transcode = True
+                reason = f"bitrate={fmt_bitrate / 1e6:.2f}Mbps > 6.0Mbps"
+            for stream in info.get("streams", []):
+                if stream.get("codec_type") == "video":
+                    width = int(stream.get("width") or 0)
+                    color_trc = (stream.get("color_transfer") or "").lower()
+                    if width > 1080:
+                        needs_transcode = True
+                        reason = f"width={width}px > 1080px"
+                    elif color_trc and color_trc not in ("bt709", "unknown"):
+                        needs_transcode = True
+                        reason = f"color_transfer={color_trc} (requires bt709)"
+        except Exception as exc:
+            logger.debug("ffprobe check skipped (%s).", exc)
+
+    if not needs_transcode:
+        return video_path
+
+    optimized_path = video_path.with_name(f"{video_path.stem}_ig_opt.mp4")
+    logger.info(
+        "[IG OPTIMIZER] Optimizing video for Instagram Reels (%s) -> 1080p H.264 BT.709 (<5 Mbps)...",
+        reason,
+    )
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(video_path),
+                "-vf",
+                "scale='min(1080,iw)':-2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "22",
+                "-maxrate",
+                "4800k",
+                "-bufsize",
+                "9600k",
+                "-pix_fmt",
+                "yuv420p",
+                "-color_primaries",
+                "bt709",
+                "-color_trc",
+                "bt709",
+                "-colorspace",
+                "bt709",
+                "-movflags",
+                "+faststart",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                str(optimized_path),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=240,
+        )
+        opt_mb = optimized_path.stat().st_size / (1024 * 1024)
+        logger.info(
+            "[IG OPTIMIZER] Optimized '%s' from %.2f MB -> %.2f MB.",
+            video_path.name,
+            size_mb,
+            opt_mb,
+        )
+        return optimized_path
+    except Exception as exc:
+        logger.warning("[IG OPTIMIZER] ffmpeg optimization failed (%s); using original video.", exc)
+        return video_path
 
 
 def _upload_temp_public_video(video_path: Path) -> str:
@@ -47,60 +158,79 @@ def upload_to_instagram_via_make(
     Instagram for Business integration (bypasses developers.facebook.com registration).
     Uses direct Google Drive CDN stream if gdrive_file_id is available, or catbox direct link.
     """
+    ig_video_path = _ensure_instagram_compliant_video(video_path)
+    was_transcoded = ig_video_path != video_path
     public_video_url = None
 
-    if gdrive_file_id:
-        try:
-            creds = get_google_credentials(config)
-            drive = build("drive", "v3", credentials=creds)
-            # Ensure anyone with link can read so Meta can download the mp4
-            drive.permissions().create(
-                fileId=gdrive_file_id,
-                body={"role": "reader", "type": "anyone"},
-            ).execute()
-            candidate_url = f"https://drive.usercontent.google.com/download?id={gdrive_file_id}&export=download&confirm=t"
-            with requests.get(
-                candidate_url,
-                headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-1023"},
-                stream=True,
-                timeout=30,
-            ) as check_resp:
-                content_type = check_resp.headers.get("Content-Type", "").lower()
-                if check_resp.ok and ("video/" in content_type or "application/octet-stream" in content_type):
-                    public_video_url = candidate_url
+    try:
+        if gdrive_file_id:
+            try:
+                creds = get_google_credentials(config)
+                drive = build("drive", "v3", credentials=creds)
+                # If we optimized the video (e.g. >45 MB / >6 Mbps / sRGB -> 25 MB BT.709), update the Drive file
+                # so the direct Google Drive stream URL serves the Meta-compliant MP4 without virus-scan warnings
+                if was_transcoded:
                     logger.info(
-                        "Using verified direct Google Drive CDN stream URL (%s) for Make.com: %s",
-                        content_type,
-                        public_video_url,
+                        "[IG OPTIMIZER] Updating Google Drive file (%s) with Instagram-optimized MP4...",
+                        gdrive_file_id,
                     )
-                else:
-                    logger.warning(
-                        "Drive URL returned non-video Content-Type '%s'; falling back to direct host upload...",
-                        content_type,
-                    )
-        except Exception as exc:
-            logger.warning("Could not set Drive public stream link (%s); falling back to direct host upload...", exc)
+                    media = MediaFileUpload(str(ig_video_path), mimetype="video/mp4", resumable=True)
+                    drive.files().update(fileId=gdrive_file_id, media_body=media).execute()
 
-    if not public_video_url:
-        logger.info("Generating temporary direct HTTPS video stream for Make.com -> Instagram...")
-        public_video_url = _upload_temp_public_video(video_path)
+                # Ensure anyone with link can read so Meta can download the mp4
+                drive.permissions().create(
+                    fileId=gdrive_file_id,
+                    body={"role": "reader", "type": "anyone"},
+                ).execute()
+                candidate_url = f"https://drive.usercontent.google.com/download?id={gdrive_file_id}&export=download&confirm=t"
+                with requests.get(
+                    candidate_url,
+                    headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-1023"},
+                    stream=True,
+                    timeout=30,
+                ) as check_resp:
+                    content_type = check_resp.headers.get("Content-Type", "").lower()
+                    if check_resp.ok and ("video/" in content_type or "application/octet-stream" in content_type):
+                        public_video_url = candidate_url
+                        logger.info(
+                            "Using verified direct Google Drive CDN stream URL (%s) for Make.com: %s",
+                            content_type,
+                            public_video_url,
+                        )
+                    else:
+                        logger.warning(
+                            "Drive URL returned non-video Content-Type '%s'; falling back to direct host upload...",
+                            content_type,
+                        )
+            except Exception as exc:
+                logger.warning("Could not set Drive public stream link (%s); falling back to direct host upload...", exc)
 
-    logger.info("Direct video URL ready for Instagram: %s", public_video_url)
+        if not public_video_url:
+            logger.info("Generating temporary direct HTTPS video stream for Make.com -> Instagram...")
+            public_video_url = _upload_temp_public_video(ig_video_path)
 
-    payload = {
-        "dedup_id": gdrive_file_id or video_path.stem,
-        "video_url": public_video_url,
-        "caption": metadata.instagram_caption[:2200],
-        "share_to_feed": config.share_to_ig_feed,
-        "youtube_title": metadata.youtube_title,
-    }
-    logger.info("Triggering Make.com Official Instagram Reel webhook...")
-    resp = requests.post(config.make_ig_webhook_url, json=payload, timeout=120)
-    if not resp.ok:
-        raise RuntimeError(f"Make.com Instagram webhook failed ({resp.status_code}): {resp.text}")
+        logger.info("Direct video URL ready for Instagram: %s", public_video_url)
 
-    logger.info("Successfully triggered Instagram Reel publish via Make.com! Response: %s", resp.text[:200])
-    return resp.text.strip() or "make_webhook_dispatched"
+        payload = {
+            "dedup_id": gdrive_file_id or video_path.stem,
+            "video_url": public_video_url,
+            "caption": metadata.instagram_caption[:2200],
+            "share_to_feed": config.share_to_ig_feed,
+            "youtube_title": metadata.youtube_title,
+        }
+        logger.info("Triggering Make.com Official Instagram Reel webhook...")
+        resp = requests.post(config.make_ig_webhook_url, json=payload, timeout=120)
+        if not resp.ok:
+            raise RuntimeError(f"Make.com Instagram webhook failed ({resp.status_code}): {resp.text}")
+
+        logger.info("Successfully triggered Instagram Reel publish via Make.com! Response: %s", resp.text[:200])
+        return resp.text.strip() or "make_webhook_dispatched"
+    finally:
+        if was_transcoded and ig_video_path.exists():
+            try:
+                ig_video_path.unlink()
+            except OSError:
+                pass
 
 
 def upload_to_instagram(
