@@ -92,15 +92,24 @@ def run() -> int:
         "30 14 * * *": "evening",
     }
 
+    PSYKETCH_CRON_TO_SLOT = {
+        "0 13 * * *": "morning_us",
+        "30 14 * * *": "morning_us",
+        "0 0 * * *": "evening_us",
+        "30 1 * * *": "evening_us",
+    }
+
     if args.profile == "psyketch":
         # 2x Daily US Audience slots (US Eastern Time):
         # Slot 1: Morning US (08:00 - 11:00 AM EST) = 17:30 - 21:30 IST (5:30 PM - 9:30 PM IST)
         # Slot 2: Evening US (07:00 - 10:00 PM EST) = 04:30 - 08:30 IST (4:30 AM - 8:30 AM IST)
         if args.slot:
             active_slot_key = args.slot
-        elif 17 <= hour <= 21:
+        elif cron_expr in PSYKETCH_CRON_TO_SLOT:
+            active_slot_key = PSYKETCH_CRON_TO_SLOT[cron_expr]
+        elif 17 <= hour <= 22:
             active_slot_key = "morning_us"
-        elif 4 <= hour <= 8:
+        else:
             active_slot_key = "evening_us"
     else:
         # Uday profile (slots: 6:00 AM, 12:00 PM, 5:30 PM IST)
@@ -195,6 +204,13 @@ def run() -> int:
                         slot_info.get("name", active_slot_key),
                     )
                     return 0
+            if active_slot_key and active_slot_key in posted_today:
+                logger.info(
+                    "[SAFEGUARD] Slot '%s' has already published a video today (%s) — skipping duplicate run.",
+                    active_slot_key,
+                    today_ist,
+                )
+                return 0
 
     video_item = gdrive.get_next_queued_video(
         platform=args.platform,

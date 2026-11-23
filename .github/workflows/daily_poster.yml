@@ -94,10 +94,12 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           MAKE_IG_WEBHOOK_URL: ${{ secrets.MAKE_IG_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
           # Remove empty env vars so python-dotenv can load values from .env if ENV_FILE was used
-          for var in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN YOUTUBE_REFRESH_TOKEN GDRIVE_QUEUE_FOLDER_ID GDRIVE_ARCHIVE_FOLDER_ID IG_USER_ID IG_ACCESS_TOKEN MAKE_IG_WEBHOOK_URL; do
+          for var in GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN YOUTUBE_REFRESH_TOKEN GDRIVE_QUEUE_FOLDER_ID GDRIVE_ARCHIVE_FOLDER_ID IG_USER_ID IG_ACCESS_TOKEN MAKE_IG_WEBHOOK_URL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
             if [ -z "${!var}" ]; then
               unset "$var"
             fi
