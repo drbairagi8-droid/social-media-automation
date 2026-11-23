@@ -18,16 +18,17 @@ GRAPH_API_VERSION = "v21.0"
 GRAPH_BASE_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 RUPLOAD_BASE_URL = f"https://rupload.facebook.com/ig-api-upload/{GRAPH_API_VERSION}"
 
-MAX_SAFE_IG_MB = 45.0
-MAX_SAFE_IG_BITRATE = 6_000_000
+MAX_SAFE_IG_MB = 120.0
+MAX_SAFE_IG_BITRATE = 15_000_000
 
 
 def _ensure_instagram_compliant_video(video_path: Path) -> Path:
     """
-    Checks if the video exceeds Meta Instagram Reels ingestion limits (>45 MB, >6 Mbps bitrate,
-    non-BT.709 color transfer such as iec61966-2-1 sRGB, or >1080p width).
-    If so, transcodes it via ffmpeg to a crisp 1080x1920 H.264 BT.709 +faststart MP4 (~20-28 MB)
-    so Meta's Graph API media container never silently drops the Reel.
+    Checks if the video has browser WebCodecs / mp4-muxer incompatibilities
+    (non-BT.709 color transfer such as iec61966-2-1 sRGB, or handler_name == 'mp4-muxer-hdlr')
+    or exceeds Meta Instagram Reels limits (>120 MB, >15 Mbps bitrate, or >1080p width).
+    If so, transcodes it via ffmpeg at visually lossless CRF 18 (1080x1920 H.264 BT.709 +faststart,
+    192 kbps AAC audio) so Meta's Graph API never drops the Reel while preserving studio quality.
     """
     size_mb = video_path.stat().st_size / (1024 * 1024)
     needs_transcode = size_mb > MAX_SAFE_IG_MB
@@ -52,17 +53,22 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
             fmt_bitrate = int(info.get("format", {}).get("bit_rate") or 0)
             if fmt_bitrate > MAX_SAFE_IG_BITRATE:
                 needs_transcode = True
-                reason = f"bitrate={fmt_bitrate / 1e6:.2f}Mbps > 6.0Mbps"
+                reason = f"bitrate={fmt_bitrate / 1e6:.2f}Mbps > 15.0Mbps"
             for stream in info.get("streams", []):
                 if stream.get("codec_type") == "video":
                     width = int(stream.get("width") or 0)
                     color_trc = (stream.get("color_transfer") or "").lower()
+                    handler = (stream.get("tags", {}).get("handler_name") or "").lower()
+                    mime_codec = (stream.get("mime_codec_string") or "").lower()
                     if width > 1080:
                         needs_transcode = True
                         reason = f"width={width}px > 1080px"
                     elif color_trc and color_trc not in ("bt709", "unknown"):
                         needs_transcode = True
                         reason = f"color_transfer={color_trc} (requires bt709)"
+                    elif "mp4-muxer" in handler or mime_codec == "avc1.640428":
+                        needs_transcode = True
+                        reason = f"browser muxer ({handler or mime_codec}) requires standard libx264 container"
         except Exception as exc:
             logger.debug("ffprobe check skipped (%s).", exc)
 
@@ -71,7 +77,7 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
 
     optimized_path = video_path.with_name(f"{video_path.stem}_ig_opt.mp4")
     logger.info(
-        "[IG OPTIMIZER] Optimizing video for Instagram Reels (%s) -> 1080p H.264 BT.709 (<5 Mbps)...",
+        "[IG OPTIMIZER] Converting video to visually-lossless Instagram Reels master (%s) -> CRF 18 BT.709...",
         reason,
     )
     try:
@@ -86,13 +92,13 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
                 "-c:v",
                 "libx264",
                 "-preset",
-                "veryfast",
+                "fast",
                 "-crf",
-                "22",
+                "18",
                 "-maxrate",
-                "4800k",
+                "8000k",
                 "-bufsize",
-                "9600k",
+                "16000k",
                 "-pix_fmt",
                 "yuv420p",
                 "-color_primaries",
@@ -106,7 +112,7 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
                 "-c:a",
                 "aac",
                 "-b:a",
-                "128k",
+                "192k",
                 str(optimized_path),
             ],
             check=True,
