@@ -52,7 +52,8 @@ function handleCorePost(e) {
     const update = JSON.parse(e.postData.contents);
     if (update.internal_action === "health_check") {
       const config = getScheduleConfig();
-      const queueInfo = getQueueInfo(config);
+      const history = getPostHistory();
+      const queueInfo = getQueueInfo(null);
       const nowUtcMs = new Date().getTime();
       const istDateObj = new Date(nowUtcMs + (5.5 * 3600 * 1000));
       const istTime = istDateObj.getUTCFullYear() + "-" +
@@ -65,7 +66,8 @@ function handleCorePost(e) {
         ist_time: istTime,
         queue_count: queueInfo.count,
         slots: config.slots || {},
-        posted_slots_by_date: config.posted_slots_by_date || {}
+        posted_slots_by_date: history.posted_slots_by_date || {},
+        dispatched_slots_by_date: history.dispatched_slots_by_date || {}
       })).setMimeType(ContentService.MimeType.JSON);
     }
     if (update.internal_action === "install_exact_triggers") {
@@ -409,13 +411,48 @@ function getScheduleConfig() {
 }
 
 function saveScheduleConfig(config) {
+  // Keep schedule_config.json strictly for user settings; post/dispatch history lives in post_history.json
+  const cleanConfig = JSON.parse(JSON.stringify(config || {}));
+  delete cleanConfig.posted_slots_by_date;
+  delete cleanConfig.dispatched_slots_by_date;
+
   const folder = DriveApp.getFolderById(QUEUE_FOLDER_ID);
   const files = folder.getFilesByName("schedule_config.json");
-  const jsonString = JSON.stringify(config, null, 2);
+  const jsonString = JSON.stringify(cleanConfig, null, 2);
   if (files.hasNext()) {
     files.next().setContent(jsonString);
   } else {
     folder.createFile("schedule_config.json", jsonString, "application/json");
+  }
+}
+
+function getPostHistory() {
+  const defaultHistory = {
+    posted_slots_by_date: {},
+    dispatched_slots_by_date: {}
+  };
+  const folder = DriveApp.getFolderById(QUEUE_FOLDER_ID);
+  const files = folder.getFilesByName("post_history.json");
+  if (files.hasNext()) {
+    const file = files.next();
+    try {
+      const parsed = JSON.parse(file.getBlob().getDataAsString());
+      if (!parsed.posted_slots_by_date) parsed.posted_slots_by_date = {};
+      if (!parsed.dispatched_slots_by_date) parsed.dispatched_slots_by_date = {};
+      return parsed;
+    } catch (e) {}
+  }
+  return defaultHistory;
+}
+
+function savePostHistory(history) {
+  const folder = DriveApp.getFolderById(QUEUE_FOLDER_ID);
+  const files = folder.getFilesByName("post_history.json");
+  const jsonString = JSON.stringify(history, null, 2);
+  if (files.hasNext()) {
+    files.next().setContent(jsonString);
+  } else {
+    folder.createFile("post_history.json", jsonString, "application/json");
   }
 }
 
@@ -578,8 +615,17 @@ function runExactScheduleCheck() {
     return "Outside posting slot windows (" + hour + ":" + minute + " IST)";
   }
 
-  const postedByDate = config.posted_slots_by_date || {};
-  const postedToday = Array.isArray(postedByDate[todayIst]) ? postedByDate[todayIst] : [];
+  const history = getPostHistory();
+  const historyPostedMap = history.posted_slots_by_date || {};
+  const legacyPostedMap = config.posted_slots_by_date || {};
+  const historyToday = Array.isArray(historyPostedMap[todayIst]) ? historyPostedMap[todayIst] : [];
+  const legacyToday = Array.isArray(legacyPostedMap[todayIst]) ? legacyPostedMap[todayIst] : [];
+  const postedToday = historyToday.slice();
+  for (let i = 0; i < legacyToday.length; i++) {
+    if (postedToday.indexOf(legacyToday[i]) === -1) {
+      postedToday.push(legacyToday[i]);
+    }
+  }
 
   const slots = config.slots || {};
   const isSlotOn = function(k) {
@@ -601,33 +647,33 @@ function runExactScheduleCheck() {
   }
 
   // Prevent hammering GitHub workflow_dispatch while a run is already in progress (cooldown: 25 mins)
-  const dispatchedByDate = config.dispatched_slots_by_date || {};
+  const dispatchedByDate = history.dispatched_slots_by_date || {};
   const dayDispatches = dispatchedByDate[todayIst] || {};
   const lastDispatchMs = dayDispatches[targetSlot] || 0;
   if (nowUtcMs - lastDispatchMs < 25 * 60 * 1000) {
     return "Cooldown active for " + targetSlot + " (dispatched recently)";
   }
 
-  // Check if there is at least 1 video in the Queue before dispatching
-  const queueInfo = getQueueInfo(config);
+  // Check if there is at least 1 video in the Queue before dispatching (pass null so settings file is untouched)
+  const queueInfo = getQueueInfo(null);
   if (queueInfo.count === 0) {
     return "Queue is empty";
   }
 
-  // Trigger GitHub workflow_dispatch for targetSlot and only record dispatch on HTTP 2xx
+  // Trigger GitHub workflow_dispatch for targetSlot and only record dispatch in post_history.json on HTTP 2xx
   const statusCode = triggerGitHubWorkflowDispatch(false, targetSlot);
   if (statusCode >= 200 && statusCode < 300) {
-    if (!config.dispatched_slots_by_date) config.dispatched_slots_by_date = {};
-    if (!config.dispatched_slots_by_date[todayIst]) config.dispatched_slots_by_date[todayIst] = {};
-    config.dispatched_slots_by_date[todayIst][targetSlot] = nowUtcMs;
+    if (!history.dispatched_slots_by_date) history.dispatched_slots_by_date = {};
+    if (!history.dispatched_slots_by_date[todayIst]) history.dispatched_slots_by_date[todayIst] = {};
+    history.dispatched_slots_by_date[todayIst][targetSlot] = nowUtcMs;
 
     // Retain only the 7 most recent dispatch dates
-    const dispatchDates = Object.keys(config.dispatched_slots_by_date).sort();
+    const dispatchDates = Object.keys(history.dispatched_slots_by_date).sort();
     for (let i = 0; i < dispatchDates.length - 7; i++) {
-      delete config.dispatched_slots_by_date[dispatchDates[i]];
+      delete history.dispatched_slots_by_date[dispatchDates[i]];
     }
 
-    saveScheduleConfig(config);
+    savePostHistory(history);
     return "Dispatched GitHub Actions (HTTP " + statusCode + ") for slot: " + targetSlot + " at " + hour + ":" + minute + " IST";
   }
 

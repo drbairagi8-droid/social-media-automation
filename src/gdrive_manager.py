@@ -240,12 +240,63 @@ class GDriveManager:
         except Exception as exc:
             logger.warning("Could not save schedule_config.json to Drive (%s).", exc)
 
+    def get_post_history(self) -> Dict[str, Any]:
+        """Fetches and parses post_history.json from Google Drive."""
+        default_history: Dict[str, Any] = {"posted_slots_by_date": {}, "dispatched_slots_by_date": {}}
+        query = (
+            f"name = 'post_history.json' "
+            f"and '{self.config.gdrive_queue_folder_id}' in parents "
+            "and trashed = false"
+        )
+        try:
+            res = self.service.files().list(q=query, fields="files(id, name)").execute()
+            files = res.get("files", [])
+            if not files:
+                return default_history
+            f_id = files[0]["id"]
+            content = self.service.files().get_media(fileId=f_id).execute().decode("utf-8")
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                return default_history
+            if not isinstance(parsed.get("posted_slots_by_date"), dict):
+                parsed["posted_slots_by_date"] = {}
+            if not isinstance(parsed.get("dispatched_slots_by_date"), dict):
+                parsed["dispatched_slots_by_date"] = {}
+            return parsed
+        except Exception as exc:
+            logger.warning("Could not read post_history.json from Drive (%s); defaulting to empty.", exc)
+            return default_history
+
+    def save_post_history(self, history: Dict[str, Any]) -> None:
+        """Persists updated post_history.json back to the Google Drive Queue folder."""
+        query = (
+            f"name = 'post_history.json' "
+            f"and '{self.config.gdrive_queue_folder_id}' in parents "
+            "and trashed = false"
+        )
+        try:
+            payload_bytes = json.dumps(history, indent=2, ensure_ascii=False).encode("utf-8")
+            media = MediaIoBaseUpload(io.BytesIO(payload_bytes), mimetype="application/json", resumable=False)
+            res = self.service.files().list(q=query, fields="files(id, name)").execute()
+            files = res.get("files", [])
+            if files:
+                self.service.files().update(fileId=files[0]["id"], media_body=media).execute()
+            else:
+                meta = {
+                    "name": "post_history.json",
+                    "parents": [self.config.gdrive_queue_folder_id],
+                    "mimeType": "application/json",
+                }
+                self.service.files().create(body=meta, media_body=media, fields="id").execute()
+        except Exception as exc:
+            logger.warning("Could not save post_history.json to Drive (%s).", exc)
+
     def record_slot_posted(self, date_str: str, slot_key: Optional[str], file_id: Optional[str] = None) -> None:
-        """Records that a slot has published today and cleans up stale dates and consumed video_slots."""
+        """Records that a slot has published today in post_history.json and retains the 7 most recent dates."""
         if not slot_key:
             return
-        schedule = self.get_schedule_config()
-        posted_map = schedule.get("posted_slots_by_date")
+        history = self.get_post_history()
+        posted_map = history.get("posted_slots_by_date")
         if not isinstance(posted_map, dict):
             posted_map = {}
 
@@ -259,13 +310,9 @@ class GDriveManager:
         # Retain only the 7 most recent dates
         for old_date in sorted(posted_map.keys())[:-7]:
             posted_map.pop(old_date, None)
-        schedule["posted_slots_by_date"] = posted_map
+        history["posted_slots_by_date"] = posted_map
 
-        # Also clean up consumed video_slots entry if present
-        if file_id and isinstance(schedule.get("video_slots"), dict):
-            schedule["video_slots"].pop(file_id, None)
-
-        self.save_schedule_config(schedule)
+        self.save_post_history(history)
 
     def archive_completed_video(self, file_id: str, file_name: str) -> None:
         """Moves a fully posted video from the Queue folder to the Archive ('Posted') folder."""

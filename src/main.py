@@ -62,6 +62,7 @@ def run() -> int:
 
     gdrive = GDriveManager(config)
     schedule = gdrive.get_schedule_config()
+    post_history = gdrive.get_post_history()
     active_slot_key = None
 
     utc_now = datetime.datetime.now(datetime.timezone.utc)
@@ -69,10 +70,15 @@ def run() -> int:
     hour = ist_now.hour
     today_ist = ist_now.strftime("%Y-%m-%d")
 
-    posted_by_date = schedule.get("posted_slots_by_date") or {}
-    posted_today = posted_by_date.get(today_ist) if isinstance(posted_by_date, dict) else []
-    if not isinstance(posted_today, list):
-        posted_today = []
+    history_posted_map = post_history.get("posted_slots_by_date")
+    legacy_posted_map = schedule.get("posted_slots_by_date")
+    history_slots = history_posted_map.get(today_ist, []) if isinstance(history_posted_map, dict) else []
+    legacy_slots = legacy_posted_map.get(today_ist, []) if isinstance(legacy_posted_map, dict) else []
+    if not isinstance(history_slots, list):
+        history_slots = []
+    if not isinstance(legacy_slots, list):
+        legacy_slots = []
+    posted_today = list(dict.fromkeys(list(history_slots) + list(legacy_slots)))
 
     cron_expr = os.getenv("GITHUB_EVENT_SCHEDULE", "").strip()
     CRON_TO_SLOT = {
