@@ -60,6 +60,16 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
                     color_trc = (stream.get("color_transfer") or "").lower()
                     handler = (stream.get("tags", {}).get("handler_name") or "").lower()
                     mime_codec = (stream.get("mime_codec_string") or "").lower()
+                    has_b_frames = stream.get("has_b_frames")
+                    logger.info(
+                        "[IG OPTIMIZER] ffprobe inspection: size=%.2fMB width=%d bitrate=%.2fMbps color_transfer=%s handler=%s has_b_frames=%s",
+                        size_mb,
+                        width,
+                        fmt_bitrate / 1e6,
+                        color_trc or "unknown",
+                        handler or "unknown",
+                        has_b_frames,
+                    )
                     if width > 1080:
                         needs_transcode = True
                         reason = f"width={width}px > 1080px"
@@ -69,8 +79,13 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
                     elif "mp4-muxer" in handler or mime_codec == "avc1.640428":
                         needs_transcode = True
                         reason = f"browser muxer ({handler or mime_codec}) requires standard libx264 container"
+                    elif has_b_frames == 0 and fmt_bitrate > 8_000_000:
+                        needs_transcode = True
+                        reason = f"no B-frames with high bitrate ({fmt_bitrate / 1e6:.2f}Mbps > 8.0Mbps)"
         except Exception as exc:
-            logger.debug("ffprobe check skipped (%s).", exc)
+            logger.warning("[IG OPTIMIZER] ffprobe check failed (%s) — forcing ffmpeg transcode as safety fallback.", exc)
+            needs_transcode = True
+            reason = f"ffprobe_failed ({exc})"
 
     if not needs_transcode:
         return video_path
@@ -117,7 +132,8 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
             ],
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
             timeout=240,
         )
         opt_mb = optimized_path.stat().st_size / (1024 * 1024)
@@ -128,6 +144,10 @@ def _ensure_instagram_compliant_video(video_path: Path) -> Path:
             opt_mb,
         )
         return optimized_path
+    except subprocess.CalledProcessError as exc:
+        err_tail = (exc.stderr or "")[-400:].strip()
+        logger.warning("[IG OPTIMIZER] ffmpeg optimization failed (exit %s): %s; using original video.", exc.returncode, err_tail)
+        return video_path
     except Exception as exc:
         logger.warning("[IG OPTIMIZER] ffmpeg optimization failed (%s); using original video.", exc)
         return video_path

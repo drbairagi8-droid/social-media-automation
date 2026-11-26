@@ -42,17 +42,32 @@ this.handleRemotePost = handleRemotePost;
 
 function handleCorePost(e) {
   try {
-    // Automatically ensure the 15-minute exact-time Google Apps Script scheduler trigger is installed
-    ensureExactScheduleTriggerInstalled();
-
     // If invoked by Google Apps Script's 15-minute Time-Driven Trigger (no postData), run exact schedule check
     if (!e || !e.postData || !e.postData.contents) {
       const statusMsg = runExactScheduleCheck();
       Logger.log("[EXACT SCHEDULER] " + statusMsg);
-      return HtmlService.createHtmlOutput("OK: " + statusMsg);
+      return null;
     }
 
     const update = JSON.parse(e.postData.contents);
+    if (update.internal_action === "health_check") {
+      const config = getScheduleConfig();
+      const queueInfo = getQueueInfo(config);
+      const nowUtcMs = new Date().getTime();
+      const istDateObj = new Date(nowUtcMs + (5.5 * 3600 * 1000));
+      const istTime = istDateObj.getUTCFullYear() + "-" +
+        String(istDateObj.getUTCMonth() + 1).padStart(2, "0") + "-" +
+        String(istDateObj.getUTCDate()).padStart(2, "0") + " " +
+        String(istDateObj.getUTCHours()).padStart(2, "0") + ":" +
+        String(istDateObj.getUTCMinutes()).padStart(2, "0") + " IST";
+      return ContentService.createTextOutput(JSON.stringify({
+        ok: true,
+        ist_time: istTime,
+        queue_count: queueInfo.count,
+        slots: config.slots || {},
+        posted_slots_by_date: config.posted_slots_by_date || {}
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
     if (update.internal_action === "install_exact_triggers") {
       let trigMsg = "";
       try {
@@ -468,7 +483,7 @@ function triggerGitHubWorkflowDispatch(forceFlag, slotKey) {
   if (slotKey) {
     inputs.slot = String(slotKey);
   }
-  UrlFetchApp.fetch(url, {
+  const resp = UrlFetchApp.fetch(url, {
     method: "post",
     headers: {
       "Authorization": "Bearer " + GITHUB_TOKEN,
@@ -482,6 +497,7 @@ function triggerGitHubWorkflowDispatch(forceFlag, slotKey) {
       inputs: inputs
     })
   });
+  return resp.getResponseCode();
 }
 
 /**
@@ -598,14 +614,27 @@ function runExactScheduleCheck() {
     return "Queue is empty";
   }
 
-  // Record dispatch timestamp and trigger GitHub workflow_dispatch for targetSlot
-  if (!config.dispatched_slots_by_date) config.dispatched_slots_by_date = {};
-  if (!config.dispatched_slots_by_date[todayIst]) config.dispatched_slots_by_date[todayIst] = {};
-  config.dispatched_slots_by_date[todayIst][targetSlot] = nowUtcMs;
-  saveScheduleConfig(config);
+  // Trigger GitHub workflow_dispatch for targetSlot and only record dispatch on HTTP 2xx
+  const statusCode = triggerGitHubWorkflowDispatch(false, targetSlot);
+  if (statusCode >= 200 && statusCode < 300) {
+    if (!config.dispatched_slots_by_date) config.dispatched_slots_by_date = {};
+    if (!config.dispatched_slots_by_date[todayIst]) config.dispatched_slots_by_date[todayIst] = {};
+    config.dispatched_slots_by_date[todayIst][targetSlot] = nowUtcMs;
 
-  triggerGitHubWorkflowDispatch(false, targetSlot);
-  return "Dispatched GitHub Actions for slot: " + targetSlot + " at " + hour + ":" + minute + " IST";
+    // Retain only the 7 most recent dispatch dates
+    const dispatchDates = Object.keys(config.dispatched_slots_by_date).sort();
+    for (let i = 0; i < dispatchDates.length - 7; i++) {
+      delete config.dispatched_slots_by_date[dispatchDates[i]];
+    }
+
+    saveScheduleConfig(config);
+    return "Dispatched GitHub Actions (HTTP " + statusCode + ") for slot: " + targetSlot + " at " + hour + ":" + minute + " IST";
+  }
+
+  const errMsg = "⚠️ Exact-time scheduler failed to dispatch `" + targetSlot + "` to GitHub Actions (HTTP " + statusCode + "). Check GITHUB\\_TOKEN in Apps Script.";
+  Logger.log("[EXACT SCHEDULER] " + errMsg);
+  sendTelegramMessage(ALLOWED_CHAT_ID, errMsg);
+  return "Dispatch failed (HTTP " + statusCode + ") for slot: " + targetSlot;
 }
 
 function sendTelegramMessage(chatId, text) {

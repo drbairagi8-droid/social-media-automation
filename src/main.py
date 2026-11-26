@@ -173,6 +173,13 @@ def run() -> int:
                         ist_now.minute,
                     )
                     return 0
+            if active_slot_key == "evening" and hour < 16:
+                logger.info(
+                    "[GATEKEEPER] Evening cron was delayed into next day (%02d:%02d IST < 16:00 IST) — skipping stale run.",
+                    ist_now.hour,
+                    ist_now.minute,
+                )
+                return 0
 
             # 4. Check if target slot is enabled
             if active_slot_key and active_slot_key in slots:
